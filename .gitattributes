@@ -1,0 +1,51 @@
+# Normalise line endings: LF in the repo, native in the working tree.
+* text=auto
+
+# --- Explicit text types ---
+*.py      text diff=python
+*.pyi     text diff=python
+*.md      text
+*.txt     text
+*.json    text
+*.yml     text
+*.yaml    text
+*.cfg     text
+*.ini     text
+*.toml    text
+*.csv     text
+
+# --- Windows-only scripts keep CRLF ---
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# --- Shell scripts keep LF ---
+*.sh      text eol=lf
+
+# --- Binary: never diff, never munge ---
+*.raw     binary
+*.bin     binary
+*.dat     binary
+*.tif     binary
+*.tiff    binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.dcm     binary
+*.npy     binary
+*.npz     binary
+*.h5      binary
+*.hdf5    binary
+*.mhd     binary
+*.mha     binary
+*.nrrd    binary
+*.nii     binary
+*.dll     binary
+*.pyd     binary
+*.so      binary
+*.pdf     binary
+*.zip     binary
+*.7z      binary
+
+# Notebooks: treat as text but suppress noisy diffs
+*.ipynb   text merge=nbdime

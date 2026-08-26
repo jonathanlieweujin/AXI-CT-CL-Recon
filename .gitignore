@@ -1,0 +1,63 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# --- Environments ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Packaging / tooling caches ---
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- Data: projections, volumes, reconstructions ---
+# Raw / intermediate imaging data does not belong in git.
+*.raw
+*.bin
+*.dat
+*.tif
+*.tiff
+*.mhd
+*.mha
+*.nrrd
+*.nii
+*.nii.gz
+*.dcm
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+Projections/
+Projections_norm/
+Recon/
+Reconstructions/
+Volumes/
+Output/
+output/
+logs/
+*.log
+
+# --- Local overrides ---
+*.local
+local_config.py
