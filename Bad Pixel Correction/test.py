@@ -4,15 +4,32 @@ import sys
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from scipy.ndimage import median_filter
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Processors"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Processors"))
 from BadPixelCorrector import BadPixelCorrector
 
-STACK_SRC = "PATH"
-DEFECT_MAP_SRC = "PATH"
-DARK_FIELD_STACK_SRC = "PATH"
-FLAT_FIELD_STACK_SRC = "PATH"
-DST_STACK_SRC = "PATH"
+STACK_SRC = r"D:\data\FlatDarkCorrectionSample\OnXray Have Unit All Correction"
+DARK_FIELD_STACK_SRC = r"D:\data\FlatDarkCorrectionSample\OffXray No Unit All Correction"
+FLAT_FIELD_STACK_SRC = r"D:\data\FlatDarkCorrectionSample\OnXray No Unit All Correction"
+DST_STACK_SRC = r"D:\data\FlatDarkCorrectionSample\Result"
+
+# Hot/cold pixel detection (median-filter local outlier test)
+MEDIAN_SIZE = 3
+MAD_MULTIPLIER = 8
+
+# Beer-Lambert log conversion (final step)
+TO_LOG_BEER_LAMBERT = True
+BETA = 1e-5
+
+
+def hot_cold_map(img: np.ndarray) -> np.ndarray:
+    """Flag pixels that deviate too far from their local neighborhood median."""
+    median = median_filter(img, size=MEDIAN_SIZE)
+    residual = img - median
+    mad = np.median(np.abs(residual - np.median(residual)))
+    threshold = MAD_MULTIPLIER * 1.4826 * mad
+    return np.abs(residual) > threshold
 
 def natural_key(name):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
@@ -56,25 +73,35 @@ if __name__ == "__main__":
     dark_imgs, _ = load_images(DARK_FIELD_STACK_SRC)
     flat_imgs, _ = load_images(FLAT_FIELD_STACK_SRC)
 
-    defect_map = cv2.imread(DEFECT_MAP_SRC, cv2.IMREAD_UNCHANGED)
-    if defect_map is None:
-        raise RuntimeError(f"Could not read: {DEFECT_MAP_SRC}")
-    mask = defect_map.astype(bool)  # False = bad pixel
-
     stack = np.stack(stack_imgs).astype(np.float64)
     dark_mean = np.mean(np.stack(dark_imgs).astype(np.float64), axis=0)
     flat_mean = np.mean(np.stack(flat_imgs).astype(np.float64), axis=0)
 
+    # build defect map from dark-field / flat-field hot/cold outliers
+    defects = hot_cold_map(dark_mean) | hot_cold_map(flat_mean)
+    mask = ~defects  # False = bad pixel
+    print(f"Defect pixels: {int(defects.sum())} / {defects.size}")
+
     # undergo correction
-    flat_corrected = (stack - dark_mean) / (flat_mean - dark_mean)
+    # denom is ~0 at bad-pixel locations (already flagged in `mask`); those
+    # values get overwritten by BadPixelCorrector below, so just suppress
+    # the divide-by-zero warning and zero out the resulting inf/nan.
+    denom = flat_mean - dark_mean
+    with np.errstate(divide="ignore", invalid="ignore"):
+        flat_corrected = np.where(denom != 0, (stack - dark_mean) / denom, 0.0)
 
     corrector = BadPixelCorrector(mask=mask)
     corrected = corrector.process(flat_corrected)
+
+    if TO_LOG_BEER_LAMBERT:
+        corrected = -np.log(corrected + BETA)
+
+    corrected = corrected.astype(np.float32)
 
     # save images
     os.makedirs(DST_STACK_SRC, exist_ok=True)
     for filename, img in zip(stack_files, corrected):
         out_path = os.path.join(DST_STACK_SRC, filename)
-        ok = cv2.imwrite(out_path, img.astype(np.float32))
+        ok = cv2.imwrite(out_path, img)  # already float32, no need to convert back
         if not ok:
             raise RuntimeError(f"Failed to save: {out_path}")
