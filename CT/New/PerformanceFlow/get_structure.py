@@ -3,6 +3,7 @@ from Util.param import VxParam
 from Util.recon_method import ReconMethodConstants
 from Util.laminography_method import LaminographyMethodConstants
 from Util.compute_geometry import VxComputeGeometry
+from Util.redundancy_weighting import to_apply_redundancy_weighting
 
 class VxTool:
     """Runs an ASTRA reconstruction algorithm given projections and a VxParam."""
@@ -269,11 +270,12 @@ class VxTool:
 
         projections = np.transpose(projections, (1, 0, 2))
         projections = self._extrapolate(projections)
-        projections = self._apply_redundancy_weight(projections,
-                                   p.offset_u,
-                                   p.det_pitch,
-                                   p.sod,
-                                   p.sdd - p.sod)
+        if to_apply_redundancy_weighting(p.offset_u, p.tilt_x, self._laminography_method):
+            projections = self._apply_redundancy_weight(projections,
+                                       p.offset_u,
+                                       p.det_pitch,
+                                       p.sod,
+                                       p.sdd - p.sod)
 
         proj_geom = astra.create_proj_geom(
             'cone_vec',

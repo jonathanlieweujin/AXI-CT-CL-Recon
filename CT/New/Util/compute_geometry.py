@@ -4,7 +4,7 @@ from Util.param import VxParam
 
 class VxComputeGeometry:
     """Laminography geometry builder"""
-
+    
     # This planar flow does not use the old rotation-matrix extraction:
     #             U = row0 * pixel, V = -row1 * pixel,
     #             S = -row2 * SOD, D = row2 * ODD.
@@ -137,10 +137,14 @@ class VxComputeGeometry:
         """Compute inclined laminography setup - Default"""
         p = param
 
-        tilt_x_rad = np.deg2rad(p.tilt_x)   # θ
-        tilt_y_rad = np.deg2rad(p.tilt_y)   # β
+        # The inclined flow takes alpha - 180 and a negated theta before the rig rotation is built.
+        tilt_x_deg = p.tilt_x - 180.0
+        angles_deg = -np.asarray(p.angles)
 
-        angles_rad = -np.deg2rad(p.angles)  # negated: matches -angleDeg[i] * PI / 180
+        tilt_x_rad = np.deg2rad(tilt_x_deg)  # θ, already alpha - 180
+        tilt_y_rad = np.deg2rad(p.tilt_y)    # β
+
+        angles_rad = -np.deg2rad(angles_deg)  # negated: matches -angleDeg[i] * PI / 180
 
         # Effective geometry (voxel domain, voxel_size = 1)
         eff_sod = p.sod

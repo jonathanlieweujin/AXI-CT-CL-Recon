@@ -8,6 +8,7 @@ from Util.param import VxParam
 from Util.recon_method import ReconMethodConstants
 from Util.laminography_method import LaminographyMethodConstants
 from Util.compute_geometry import VxComputeGeometry
+from Util.redundancy_weighting import to_apply_redundancy_weighting
 
 def _rot_z(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
@@ -32,15 +33,15 @@ class VxGeom:
     def __init__(self, param: VxParam):
         self.param = param
 
-    def _rig_rotation(self) -> np.ndarray:
+    def _rig_rotation(self, tilt_x_deg: float, angles_deg: np.ndarray) -> np.ndarray:
         """
         (N, 3, 3) rig rotation stack, identical rows to PerformanceFlow's
         computeDefaultInclinedLaminographyGeometry: R = Rx(-tilt_x) · Ry(tilt_y) · Rz(phi),
         phi = -deg2rad(angles).
         """
         p = self.param
-        phi = -np.deg2rad(p.angles)
-        sin_tx, cos_tx = np.sin(np.deg2rad(p.tilt_x)), np.cos(np.deg2rad(p.tilt_x))
+        phi = -np.deg2rad(angles_deg)
+        sin_tx, cos_tx = np.sin(np.deg2rad(tilt_x_deg)), np.cos(np.deg2rad(tilt_x_deg))
         sin_ty, cos_ty = np.sin(np.deg2rad(p.tilt_y)), np.cos(np.deg2rad(p.tilt_y))
         cos_phi, sin_phi = np.cos(phi), np.sin(phi)
 
@@ -67,7 +68,11 @@ class VxGeom:
         (branch chosen so a1 stays positive, matching the old convention);
         then (a0, a1, a2) = (-A, b, -C).
         """
-        D = _B @ self._rig_rotation()          # (N, 3, 3)
+        # The inclined flow takes alpha - 180 and a negated theta before the rig rotation is built.
+        tilt_x_deg = self.param.tilt_x - 180.0
+        angles_deg = -np.asarray(self.param.angles)
+
+        D = _B @ self._rig_rotation(tilt_x_deg, angles_deg)   # (N, 3, 3)
         b = np.arccos(np.clip(D[:, 2, 2], -1.0, 1.0))
         regular = np.sin(b) > 1e-9
         A = np.where(regular, np.arctan2(-D[:, 2, 1], D[:, 2, 0]), 0.0)
@@ -77,9 +82,9 @@ class VxGeom:
                      np.arctan2(D[:, 1, 0], D[:, 0, 0]))
         return -A, b, -C
 
-    # def get_default_angles(self) -> np.ndarray:
-    #     a0, a1, a2 = self._zyz_angles()
-    #     return np.column_stack([a0, a1, a2]).astype(np.float32)
+    def get_default_angles(self) -> np.ndarray:
+        a0, a1, a2 = self._zyz_angles()
+        return np.column_stack([a0, a1, a2]).astype(np.float32)
 
     def _make_geometry(self, planar_axis_order: bool = False) -> tigre.geometry:
         p = self.param
@@ -117,8 +122,8 @@ class VxGeom:
         geo.mode = 'cone'
         return geo
 
-    # def get_default_geometry(self) -> tigre.geometry:
-    #     return self._make_geometry(planar_axis_order=False)
+    def get_default_geometry(self) -> tigre.geometry:
+        return self._make_geometry(planar_axis_order=False)
 
     @staticmethod
     def _astra_to_tigre_points(points: np.ndarray) -> np.ndarray:
@@ -140,12 +145,15 @@ class VxGeom:
             rot[i, 0] = np.arctan2(Wt[2, 1], Wt[2, 2])
         return rot.astype(np.float32)
 
-    def get_planar_geometry_and_angles(self, laminography_method: LaminographyMethodConstants) -> tuple[tigre.geometry, np.ndarray]:
-        if laminography_method == LaminographyMethodConstants.COPLANAR:
-            vecs = VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self.param).reshape(-1, 12)
-        else:
-            vecs = VxComputeGeometry.computeDefaultInclinedLaminographyGeometry(self.param).reshape(-1, 12)
-        
+    def get_planar_geometry_and_angles(self) -> tuple[tigre.geometry, np.ndarray]:
+        """
+        Coplanar-only. The axis permutation below assumes the source sits at a
+        constant +SOD along ASTRA's z, which holds for the coplanar geometry but
+        not the inclined one — the inclined flow uses get_default_geometry /
+        get_default_angles instead.
+        """
+        vecs = VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self.param).reshape(-1, 12)
+
         source = self._astra_to_tigre_points(vecs[:, 0:3])
         detector = self._astra_to_tigre_points(vecs[:, 3:6])
 
@@ -258,14 +266,19 @@ class VxTool:
 
     def run(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
         is_planar = self._laminography_method == LaminographyMethodConstants.COPLANAR
-        geo, angles = self._geom.get_planar_geometry_and_angles(self._laminography_method)
+        if is_planar:
+            geo, angles = self._geom.get_planar_geometry_and_angles()
+        else:
+            geo = self._geom.get_default_geometry()
+            angles = self._geom.get_default_angles()
 
         projections, geo = self._extrapolate(projections, geo)
 
         name = self._normalise_algo_name(algo)
         if name == ReconMethodConstants.FDK:
-            if is_planar and "dowang" not in kwargs:
-                kwargs["dowang"] = False
+            if "dowang" not in kwargs:
+                kwargs["dowang"] = to_apply_redundancy_weighting(
+                    self._param.offset_u, self._param.tilt_x, self._laminography_method)
             self.result = algs.fdk(
                 projections,
                 geo,

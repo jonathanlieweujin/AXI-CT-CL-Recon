@@ -11,38 +11,39 @@ from QualityFlow.get_structure import VxTool as QualityTool
 from PerformanceFlow.get_structure import VxTool as PerformanceTool
 
 # --- Parameters ---
-SRC = r"C:\Users\User\Documents\Dataset\Button Cell\SOD 34mm SDD 622mm 130kV 500uA 3000 speed Cu Filter\Corrected"
-DetU = 2803
-DetV = 2401
-DetZ = 721
+SRC = r"C:\Users\User\Documents\Dataset\Excillum\LED 70kv\Projections_norm_90cw"
+DetU = 1200
+DetV = 1401
+DetZ = 2000
 
 # LEFT_PAD = int(DetU / 2)
 LEFT_PAD = 0
 # RIGHT_PAD = int(DetU / 2)
 RIGHT_PAD = 0
 
-DetPitch = 0.1
-Binning = 4
-Interval = 2
-Mode = VxFlowMethod.PERFORMANCE
+DetPitch = 0.2
+Binning = 2
+Interval = 4
+Mode = VxFlowMethod.QUALITY
 LaminographyMethod = LaminographyMethodConstants.INCLINED
-ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
+ProjectionAngles = np.linspace(0, -360, DetZ, endpoint=True)
 ProjectionAngles = ProjectionAngles[::Interval]
 NumImgs = len(ProjectionAngles)
 
-VolX = 840
-VolY = 840
-VolZ = 720
+VolX = 600
+VolY = 600
+VolZ = 300
 
-SOD = 34
-SDD = 622
+SOD = 4.9
+SDD = 490
 
-DetTiltX = 90
+DetTiltX = 51
 DetTiltY = 0
 
-DetOffsetU = -38.52
+DetOffsetU = -14.1
 DetOffsetV = 0
 
+# Offset in mm
 VolMidX = 0
 VolMidY = 0
 VolMidZ = 0
