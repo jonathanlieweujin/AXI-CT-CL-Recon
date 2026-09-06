@@ -91,8 +91,6 @@ else:
 # tool.plot_geometry()
 recon = tool.run(images, algo=ReconMethodConstants.FDK)
 
-# recon = np.transpose(recon, (2,0,1))
-
 # --- Normalise to 8-bit (global contrast stretch) ---
 r_min = float(recon.min())
 r_max = float(recon.max())
