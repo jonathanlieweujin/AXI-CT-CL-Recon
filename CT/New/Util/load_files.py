@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 class FileLoader:
     @staticmethod
     def loadImages(input_folder,

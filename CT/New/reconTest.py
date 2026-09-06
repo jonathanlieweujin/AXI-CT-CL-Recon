@@ -1,63 +1,53 @@
 import numpy as np
-import os
-import ctypes
-# -----------------------------
-# Load CUDA library
-# -----------------------------
-cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-os.add_dll_directory(cuda_path)
-ctypes.WinDLL("cudart64_12.dll")
-
 import matplotlib.pyplot as plt
-
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-sys.path.insert(0, r"C:\Users\P3084\Documents\Projects\GitHub\TIGRE\Python")
+from matplotlib.widgets import Slider
 
 from Util.param import VxParam
 from Util.load_files import FileLoader
-from TigreLib.get_structure import VxTool as TigreTool
-from AstraLib.get_structure import VxTool as AstraTool
-
-from matplotlib.widgets import Slider
+from Util.recon_method import ReconMethodConstants
+from Util.laminography_method import LaminographyMethodConstants
+from Util.flow_method import VxFlowMethod
+from QualityFlow.get_structure import VxTool as QualityTool
+from PerformanceFlow.get_structure import VxTool as PerformanceTool
 
 # --- Parameters ---
-SRC = r"C:\Users\P3084\Desktop\Test\Projections_norm"
-DetU = 1536
-DetV = 1536
-DetZ = 256
+SRC = r"C:\Users\User\Documents\Dataset\Button Cell\SOD 34mm SDD 622mm 130kV 500uA 3000 speed Cu Filter\Corrected"
+DetU = 2803
+DetV = 2401
+DetZ = 721
 
-LEFT_PAD = int(DetU / 2)
-RIGHT_PAD = int(DetU / 2)
+# LEFT_PAD = int(DetU / 2)
+LEFT_PAD = 0
+# RIGHT_PAD = int(DetU / 2)
+RIGHT_PAD = 0
 
-# LEFT_PAD = 0
-# RIGHT_PAD = 0
-
-DetPitch = 0.084
-Binning = 2
-Interval = 1
-Mode = "tigre" # astra / tigre
-DetectorParallel = True # True: planar (flat) detector geometry, False: tilted detector geometry
+DetPitch = 0.1
+Binning = 4
+Interval = 2
+Mode = VxFlowMethod.PERFORMANCE
+LaminographyMethod = LaminographyMethodConstants.INCLINED
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 ProjectionAngles = ProjectionAngles[::Interval]
 NumImgs = len(ProjectionAngles)
 
-VolX = 768
-VolY = 768
-VolZ = 150
+VolX = 840
+VolY = 840
+VolZ = 720
 
-SOD = 350
-SDD = 476
+SOD = 34
+SDD = 622
 
-DetTiltX = 30
+DetTiltX = 90
 DetTiltY = 0
 
-DetOffsetU = 0
+DetOffsetU = -38.52
 DetOffsetV = 0
 
 VolMidX = 0
 VolMidY = 0
 VolMidZ = 0
+
+Iterations = 1
 
 # --- Load images ---
 images = FileLoader.loadImages(SRC, DetU, DetV, NumImgs, interval=Interval, binning=Binning)
@@ -82,22 +72,23 @@ param = VxParam(
     dst_x=VolX,
     dst_y=VolY,
     dst_z=VolZ,
+    iterations=Iterations
 )
 
 # --- Reconstruct ---
-if Mode == "astra":
-    tool = AstraTool(param, 
-                     detector_parallel=DetectorParallel,
+if Mode == VxFlowMethod.PERFORMANCE:
+    tool = PerformanceTool(param,
+                     laminography_method=LaminographyMethod,
                      left_pad=LEFT_PAD,
                      right_pad=RIGHT_PAD)
 else:
-    tool = TigreTool(param,
-                     detector_parallel=DetectorParallel,
+    tool = QualityTool(param,
+                     laminography_method=LaminographyMethod,
                      left_pad=LEFT_PAD,
                      right_pad=RIGHT_PAD)
 
 # tool.plot_geometry()
-recon = tool.run(images, algo="cgls")
+recon = tool.run(images, algo=ReconMethodConstants.FDK)
 
 # recon = np.transpose(recon, (2,0,1))
 

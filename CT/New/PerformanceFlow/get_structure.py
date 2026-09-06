@@ -1,317 +1,49 @@
 import numpy as np
 from Util.param import VxParam
-
-
-class VxGeom:
-    """
-    Builds one 3x4 vector geometry matrix per projection angle,
-    matching the ComputeSliceContributionToVectorStack convention:
-
-        R = Rx(-tiltX) Â· Ry(tiltY) Â· Rz(-phi)
-
-    Each row of the returned array is the 12-element flat vector:
-        [Sx, Sy, Sz,  Dx, Dy, Dz,  Ux, Uy, Uz,  Vx, Vy, Vz]
-
-    reshaped to (num_angles, 3, 4):
-        col 0 â†’ D (detector origin)
-        col 1 â†’ U (detector u-axis, row direction)
-        col 2 â†’ V (detector v-axis, col direction)
-        col 3 â†’ S (source position)
-
-    which is the ASTRA cone_vec / parallel_vec layout.
-    """
-
-    def __init__(self, param: VxParam):
-        self.param = param
-
-    def computeGimballLockGeom(self) -> np.ndarray:
-        """Build a Z-orbit geometry with a world-X-stabilized detector.
-
-        Source and detector centres follow the inclined orbit used by the
-        default geometry. Unlike the default rigid rotation, detector U is
-        obtained by projecting world +X onto the detector plane. This removes
-        detector roll: the edge that starts on the right remains the right
-        edge throughout the orbit. V completes the orthonormal detector basis.
-        """
-        p = self.param
-        tx = np.deg2rad(p.tilt_x)
-        ty = np.deg2rad(p.tilt_y)
-        phi = -np.deg2rad(p.angles)
-        sx, cx = np.sin(tx), np.cos(tx)
-        sy, cy = np.sin(ty), np.cos(ty)
-        sp, cp = np.sin(phi), np.cos(phi)
-
-        # Inclined detector normal at angle zero; its orbit is around world Z.
-        n0 = np.array([cx * sy, -sx, cx * cy])
-
-        def rotate_about_z(vector):
-            return np.column_stack((
-                cp * vector[0] - sp * vector[1],
-                sp * vector[0] + cp * vector[1],
-                np.full_like(phi, vector[2]),
-            ))
-
-        normal = rotate_about_z(n0)
-
-        # Project fixed world-right into each detector plane. This no-roll
-        # constraint keeps the same physical detector edge on the right.
-        world_right = np.array([1.0, 0.0, 0.0])
-        u = world_right - normal * (normal @ world_right)[:, None]
-        u_norm = np.linalg.norm(u, axis=1, keepdims=True)
-        if np.any(u_norm < 1e-12):
-            raise ValueError("Gimbal U axis is singular when detector normal aligns with world X")
-        u /= u_norm
-        v = np.cross(u, normal)
-        vecs = np.zeros((p.num_of_imgs, 12), dtype=np.float64)
-        vecs[:, 0:3] = -p.sod * normal
-        vecs[:, 3:6] = (p.sdd - p.sod) * normal
-        vecs[:, 6:9] = p.det_pitch * u
-        vecs[:, 9:12] = p.det_pitch * v
-        vecs[:, 3:6] += p.offset_u * vecs[:, 6:9] + p.offset_v * vecs[:, 9:12]
-        return vecs.reshape(p.num_of_imgs, 3, 4)
-
-    def computePlanarGeom(self) -> np.ndarray:
-        """
-        Build ASTRA cone_vec geometry for the planar laminography flow.
-
-        This planar flow does not use the old rotation-matrix extraction:
-            U = row0 * pixel, V = -row1 * pixel,
-            S = -row2 * SOD, D = row2 * ODD.
-
-        Instead, SOD and ODD are interpreted as axial distances along Z.
-        The laminography tilt creates only an XY orbit shift. For a point at
-        axial distance z from the object plane, the in-plane shift is:
-            r = z * tan(tilt_x)
-
-        With phi = -deg2rad(angle), the source and detector centers are:
-            Sx = -SOD * tan(tilt_x) * cos(phi)
-            Sy = -SOD * tan(tilt_x) * sin(phi)
-            Sz = -SOD
-
-            Dx =  ODD * tan(tilt_x) * cos(phi)
-            Dy =  ODD * tan(tilt_x) * sin(phi)
-            Dz =  ODD
-
-        The detector plane is kept flat in the world frame, so the pixel axes
-        are constant for all projections:
-            U = (det_pitch, 0, 0)
-            V = (0, +det_pitch, 0)
-
-        Detector offsets move D along those U/V axes:
-            D = D + offset_u * U + offset_v * V
-
-        ASTRA cone_vec row layout is:
-            [Sx Sy Sz  Dx Dy Dz  Ux Uy Uz  Vx Vy Vz]
-        """
-        p = self.param
-
-        tilt_x_rad = -np.deg2rad(p.tilt_x) # tilt x negated
-        angles_rad = -np.deg2rad(p.angles)
-
-        eff_sod = p.sod
-        eff_odd = p.sdd - p.sod
-        eff_pixel = p.det_pitch
-
-        tan_tx = np.tan(tilt_x_rad)
-        cos_phi = np.cos(angles_rad)
-        sin_phi = np.sin(angles_rad)
-
-        N = p.num_of_imgs
-        vecs = np.zeros((N, 12), dtype=np.float64)
-
-        # Source center: axial SOD plus tilt-induced XY shift.
-        vecs[:, 0] = eff_sod * tan_tx * cos_phi
-        vecs[:, 1] = eff_sod * tan_tx * sin_phi
-        vecs[:, 2] = eff_sod
-
-        # Detector center: axial ODD plus matching tilt-induced XY shift.
-        vecs[:, 3] = -eff_odd * tan_tx * cos_phi
-        vecs[:, 4] = -eff_odd * tan_tx * sin_phi
-        vecs[:, 5] = -eff_odd
-
-        # Flat detector basis in world coordinates.
-        vecs[:, 6] = eff_pixel
-        vecs[:, 7] = 0.0
-        vecs[:, 8] = 0.0
-
-        vecs[:,  9] = 0.0
-        vecs[:, 10] = +eff_pixel
-        vecs[:, 11] = 0.0
-
-        # Detector offsets
-        vecs[:, 3] += p.offset_u * vecs[:, 6] + p.offset_v * vecs[:, 9]
-        vecs[:, 4] += p.offset_u * vecs[:, 7] + p.offset_v * vecs[:, 10]
-        vecs[:, 5] += p.offset_u * vecs[:, 8] + p.offset_v * vecs[:, 11]
-
-        return vecs.reshape(N, 3, 4)
-
-    # ref: https:# doi.org/10.1088/1361-6501/aafcae
-    # Laminography in the lab: imaging planar objects using a conventional x-ray CT scanner
-    # Î¸ = detTiltXRad,  Î² = detTiltYRad,  Ï† = angleRadContribution
-    # 
-    # M1 = Rx(-Î¸) = [ 1      0       0   ]
-    #               [ 0    cosÎ¸    sinÎ¸   ]
-    #               [ 0   -sinÎ¸    cosÎ¸   ]
-    # 
-    # M2 = Ry(Î²)  = [ cosÎ²    0   -sinÎ²  ]
-    #               [  0      1     0    ]
-    #               [ sinÎ²    0    cosÎ²  ]
-    # 
-    # M3 = Rz(-Ï†) = [ cosÏ†   sinÏ†    0   ]
-    #               [-sinÏ†   cosÏ†    0   ]
-    #               [  0      0      1   ]
-    # 
-    # Step 1 â€” A = M1Â·M2:
-    # 
-    #   A[0][0] = 1Â·cosÎ²  + 0Â·0 + 0Â·sinÎ²   =  cosÎ²
-    #   A[0][1] = 1Â·0     + 0Â·1 + 0Â·0      =  0
-    #   A[0][2] = 1Â·(-sinÎ²) + 0Â·0 + 0Â·cosÎ² =  -sinÎ²
-    # 
-    #   A[1][0] = 0Â·cosÎ²  + cosÎ¸Â·0 + sinÎ¸Â·sinÎ²  =  sinÎ¸ sinÎ²
-    #   A[1][1] = 0Â·0     + cosÎ¸Â·1 + sinÎ¸Â·0     =  cosÎ¸
-    #   A[1][2] = 0Â·(-sinÎ²) + cosÎ¸Â·0 + sinÎ¸Â·cosÎ² =  sinÎ¸ cosÎ²
-    # 
-    #   A[2][0] = 0Â·cosÎ²  + (-sinÎ¸)Â·0 + cosÎ¸Â·sinÎ²  =  cosÎ¸ sinÎ²
-    #   A[2][1] = 0Â·0     + (-sinÎ¸)Â·1 + cosÎ¸Â·0     = -sinÎ¸
-    #   A[2][2] = 0Â·(-sinÎ²) + (-sinÎ¸)Â·0 + cosÎ¸Â·cosÎ² =  cosÎ¸ cosÎ²
-    # 
-    #        [  cosÎ²      0       -sinÎ²  ]
-    # A  =   [  sinÎ¸ sinÎ²  cosÎ¸   sinÎ¸ cosÎ² ]
-    #        [  cosÎ¸ sinÎ² -sinÎ¸   cosÎ¸ cosÎ² ]
-    # 
-    # Step 2 â€” R = AÂ·M3:
-    # 
-    #   R[0][0] = cosÎ²Â·cosÏ†   + 0Â·(-sinÏ†)      + (-sinÎ²)Â·0   =  cosÎ² cosÏ†
-    #   R[0][1] = cosÎ²Â·sinÏ†   + 0Â·cosÏ†         + (-sinÎ²)Â·0   =  cosÎ² sinÏ†
-    #   R[0][2] = cosÎ²Â·0      + 0Â·0            + (-sinÎ²)Â·1   = -sinÎ²
-    # 
-    #   R[1][0] = sinÎ¸ sinÎ²Â·cosÏ† + cosÎ¸Â·(-sinÏ†) + sinÎ¸ cosÎ²Â·0  =  sinÎ¸ sinÎ² cosÏ† - cosÎ¸ sinÏ†
-    #   R[1][1] = sinÎ¸ sinÎ²Â·sinÏ† + cosÎ¸Â·cosÏ†   + sinÎ¸ cosÎ²Â·0  =  sinÎ¸ sinÎ² sinÏ† + cosÎ¸ cosÏ†
-    #   R[1][2] = sinÎ¸ sinÎ²Â·0   + cosÎ¸Â·0       + sinÎ¸ cosÎ²Â·1  =  sinÎ¸ cosÎ²
-    # 
-    #   R[2][0] = cosÎ¸ sinÎ²Â·cosÏ† + (-sinÎ¸)Â·(-sinÏ†) + cosÎ¸ cosÎ²Â·0  =  cosÎ¸ sinÎ² cosÏ† + sinÎ¸ sinÏ†
-    #   R[2][1] = cosÎ¸ sinÎ²Â·sinÏ† + (-sinÎ¸)Â·cosÏ†   + cosÎ¸ cosÎ²Â·0  =  cosÎ¸ sinÎ² sinÏ† - sinÎ¸ cosÏ†
-    #   R[2][2] = cosÎ¸ sinÎ²Â·0   + (-sinÎ¸)Â·0       + cosÎ¸ cosÎ²Â·1  =  cosÎ¸ cosÎ²
-    # 
-    #        [  cosÎ² cosÏ†                  cosÎ² sinÏ†                 -sinÎ²      ]  <- row0
-    # R  =   [  sinÎ¸ sinÎ² cosÏ† - cosÎ¸ sinÏ†   sinÎ¸ sinÎ² sinÏ† + cosÎ¸ cosÏ†   sinÎ¸ cosÎ²  ]  <- row1
-    #        [  cosÎ¸ sinÎ² cosÏ† + sinÎ¸ sinÏ†   cosÎ¸ sinÎ² sinÏ† - sinÎ¸ cosÏ†   cosÎ¸ cosÎ²  ]  <- row2
-    # 
-    # Extraction:
-    #   U  = +row0 Â· effPixelSize
-    #   V  = -row1 Â· effPixelSize
-    #   S  = -row2 Â· effSOD
-    #   D  = +row2 Â· effODD
-    def computeDefaultGeom(self) -> np.ndarray:
-        p = self.param
-
-        tilt_x_rad = np.deg2rad(p.tilt_x)   # Î¸
-        tilt_y_rad = np.deg2rad(p.tilt_y)   # Î²
-
-        angles_rad = -np.deg2rad(p.angles)  # negated: matches -angleDeg[i] * PI / 180
-
-        # Effective geometry (voxel domain, voxel_size = 1)
-        eff_sod = p.sod
-        eff_odd = p.sdd - p.sod
-        eff_pixel = p.det_pitch
-
-        sin_tx = np.sin(tilt_x_rad)   # sinÎ¸
-        cos_tx = np.cos(tilt_x_rad)   # cosÎ¸
-        sin_ty = np.sin(tilt_y_rad)   # sinÎ²
-        cos_ty = np.cos(tilt_y_rad)   # cosÎ²
-
-        cos_phi = np.cos(angles_rad)   # (N,)
-        sin_phi = np.sin(angles_rad)   # (N,)
-
-        # R = Rx(-Î¸) Â· Ry(Î²) Â· Rz(-Ï†)  (broadcast over N angles)
-        # row0
-        r00 =  cos_ty * cos_phi
-        r01 =  cos_ty * sin_phi
-        r02 = -sin_ty * np.ones_like(cos_phi)
-
-        # row1
-        r10 =  sin_tx * sin_ty * cos_phi - cos_tx * sin_phi
-        r11 =  sin_tx * sin_ty * sin_phi + cos_tx * cos_phi
-        r12 =  sin_tx * cos_ty * np.ones_like(cos_phi)
-
-        # row2
-        r20 =  cos_tx * sin_ty * cos_phi + sin_tx * sin_phi
-        r21 =  cos_tx * sin_ty * sin_phi - sin_tx * cos_phi
-        r22 =  cos_tx * cos_ty * np.ones_like(cos_phi)
-
-        N = p.num_of_imgs
-        vecs = np.zeros((N, 12), dtype=np.float64)
-
-        # S = -row2 Â· eff_sod
-        vecs[:, 0] = -eff_sod * r20
-        vecs[:, 1] = -eff_sod * r21
-        vecs[:, 2] = -eff_sod * r22
-
-        # D = +row2 Â· eff_odd
-        vecs[:, 3] = eff_odd * r20
-        vecs[:, 4] = eff_odd * r21
-        vecs[:, 5] = eff_odd * r22
-
-        # U = +row0 Â· eff_pixel
-        vecs[:, 6] = eff_pixel * r00
-        vecs[:, 7] = eff_pixel * r01
-        vecs[:, 8] = eff_pixel * r02
-
-        # V = -row1 Â· eff_pixel
-        vecs[:, 9]  = -eff_pixel * r10
-        vecs[:, 10] = -eff_pixel * r11
-        vecs[:, 11] = -eff_pixel * r12
-
-        # Apply detector offsets along U and V axes
-        vecs[:, 3] += p.offset_u * vecs[:, 6] + p.offset_v * vecs[:, 9]
-        vecs[:, 4] += p.offset_u * vecs[:, 7] + p.offset_v * vecs[:, 10]
-        vecs[:, 5] += p.offset_u * vecs[:, 8] + p.offset_v * vecs[:, 11]
-
-        # Return as (N, 3, 4): each matrix is [D | U | V | S]
-        # ASTRA cone_vec row layout: [Sx Sy Sz  Dx Dy Dz  Ux Uy Uz  Vx Vy Vz]
-        return vecs.reshape(N, 3, 4)
+from Util.recon_method import ReconMethodConstants
+from Util.laminography_method import LaminographyMethodConstants
+from Util.compute_geometry import VxComputeGeometry
 
 class VxTool:
     """Runs an ASTRA reconstruction algorithm given projections and a VxParam."""
 
-    def __init__(self, param: VxParam, detector_parallel: bool = False, left_pad: int = 0, right_pad: int = 0):
-        self._geom = VxGeom(param)
+    def __init__(self, param: VxParam, laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED, left_pad: int = 0, right_pad: int = 0):
         self._param = param
-        self._detector_parallel = detector_parallel
+        self._laminography_method = laminography_method
         self._left_pad = int(left_pad)
         self._right_pad = int(right_pad)
         self.result = None
 
-    def run(self, projections: np.ndarray, algo: str = "FDK", iterations: int = 5,
+    def run(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK,
             min_constraint: float | None = None, max_constraint: float | None = None) -> np.ndarray:
         match algo.upper():
-            case "fdk" | "FDK":
+            case ReconMethodConstants.FDK:
                 self.result = self._run_fdk(projections)
-            case "sirt" | "SIRT" | "SIRT3D_CUDA":
+            case ReconMethodConstants.SIRT | "SIRT3D_CUDA":
                 self.result = self._run_iterative(
                     projections,
                     astra_algo="SIRT3D_CUDA",
-                    iterations=iterations,
+                    iterations=self._param.iterations,
                     min_constraint=min_constraint,
                     max_constraint=max_constraint,
                 )
-            case "cgls" | "CGLS" | "CGLS3D_CUDA":
+            case ReconMethodConstants.CGLS | "CGLS3D_CUDA":
                 self.result = self._run_iterative(
                     projections,
                     astra_algo="CGLS3D_CUDA",
-                    iterations=iterations,
+                    iterations=self._param.iterations,
                     min_constraint=min_constraint,
                     max_constraint=max_constraint,
                 )
             case _:
-                raise NotImplementedError(f"Algorithm '{algo}' is not implemented in AstraLib.")
+                raise NotImplementedError(f"Algorithm '{algo}' is not implemented in PerformanceFlow.")
 
         return self.result
 
     def _get_vectors(self) -> np.ndarray:
-        if self._detector_parallel:
-            return self._geom.computePlanarGeom().reshape(-1, 12)
-        return self._geom.computeDefaultGeom().reshape(-1, 12)
+        if self._laminography_method == LaminographyMethodConstants.COPLANAR:
+            return VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self._param).reshape(-1, 12)
+        return VxComputeGeometry.computeDefaultInclinedLaminographyGeometry(self._param).reshape(-1, 12)
 
     def _get_padded_vectors(self, vecs: np.ndarray) -> np.ndarray:
         left_pad = max(0, self._left_pad)

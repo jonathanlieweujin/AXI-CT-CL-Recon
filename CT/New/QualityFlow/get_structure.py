@@ -5,8 +5,9 @@ import tigre
 import tigre.algorithms as algs
 from tigre.utilities.common_geometry import ArbitrarySourceDetMoveGeo
 from Util.param import VxParam
-
-NUM_OF_ITERATIONS = 20
+from Util.recon_method import ReconMethodConstants
+from Util.laminography_method import LaminographyMethodConstants
+from Util.compute_geometry import VxComputeGeometry
 
 def _rot_z(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
@@ -17,7 +18,6 @@ def _rot_y(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
     return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
 
-
 # Maps the Astra canonical detector frame (u=ex, v=-ey, source=-ez) onto
 # TIGRE's beam frame (u=+y, v=+z, source=+x): ex->ey, ey->-ez, ez->-ex.
 _B = np.array([
@@ -25,7 +25,6 @@ _B = np.array([
     [1.0,  0.0,  0.0],
     [0.0, -1.0,  0.0],
 ])
-
 
 class VxGeom:
     """Builds TIGRE geometry from VxParam, mirroring ComputeAnglesStruct2."""
@@ -35,8 +34,8 @@ class VxGeom:
 
     def _rig_rotation(self) -> np.ndarray:
         """
-        (N, 3, 3) rig rotation stack, identical rows to AstraLib's
-        computeDefaultGeom: R = Rx(-tilt_x) · Ry(tilt_y) · Rz(phi),
+        (N, 3, 3) rig rotation stack, identical rows to PerformanceFlow's
+        computeDefaultInclinedLaminographyGeometry: R = Rx(-tilt_x) · Ry(tilt_y) · Rz(phi),
         phi = -deg2rad(angles).
         """
         p = self.param
@@ -78,9 +77,9 @@ class VxGeom:
                      np.arctan2(D[:, 1, 0], D[:, 0, 0]))
         return -A, b, -C
 
-    def get_default_angles(self) -> np.ndarray:
-        a0, a1, a2 = self._zyz_angles()
-        return np.column_stack([a0, a1, a2]).astype(np.float32)
+    # def get_default_angles(self) -> np.ndarray:
+    #     a0, a1, a2 = self._zyz_angles()
+    #     return np.column_stack([a0, a1, a2]).astype(np.float32)
 
     def _make_geometry(self, planar_axis_order: bool = False) -> tigre.geometry:
         p = self.param
@@ -118,48 +117,8 @@ class VxGeom:
         geo.mode = 'cone'
         return geo
 
-    def get_default_geometry(self) -> tigre.geometry:
-        return self._make_geometry(planar_axis_order=False)
-
-    def computePlanarGeom(self) -> np.ndarray:
-        """Build the same planar laminography vectors as AstraLib.computePlanarGeom."""
-        p = self.param
-
-        tilt_x_rad = -np.deg2rad(p.tilt_x)  # tilt x negated
-        angles_rad = -np.deg2rad(p.angles)
-
-        eff_sod = p.sod
-        eff_odd = p.sdd - p.sod
-        eff_pixel = p.det_pitch
-
-        tan_tx = np.tan(tilt_x_rad)
-        cos_phi = np.cos(angles_rad)
-        sin_phi = np.sin(angles_rad)
-
-        N = p.num_of_imgs
-        vecs = np.zeros((N, 12), dtype=np.float64)
-
-        vecs[:, 0] = eff_sod * tan_tx * cos_phi
-        vecs[:, 1] = eff_sod * tan_tx * sin_phi
-        vecs[:, 2] = eff_sod
-
-        vecs[:, 3] = -eff_odd * tan_tx * cos_phi
-        vecs[:, 4] = -eff_odd * tan_tx * sin_phi
-        vecs[:, 5] = -eff_odd
-
-        vecs[:, 6] = eff_pixel
-        vecs[:, 7] = 0.0
-        vecs[:, 8] = 0.0
-
-        vecs[:, 9] = 0.0
-        vecs[:, 10] = +eff_pixel
-        vecs[:, 11] = 0.0
-
-        vecs[:, 3] += p.offset_u * vecs[:, 6] + p.offset_v * vecs[:, 9]
-        vecs[:, 4] += p.offset_u * vecs[:, 7] + p.offset_v * vecs[:, 10]
-        vecs[:, 5] += p.offset_u * vecs[:, 8] + p.offset_v * vecs[:, 11]
-
-        return vecs.reshape(N, 3, 4)
+    # def get_default_geometry(self) -> tigre.geometry:
+    #     return self._make_geometry(planar_axis_order=False)
 
     @staticmethod
     def _astra_to_tigre_points(points: np.ndarray) -> np.ndarray:
@@ -181,8 +140,12 @@ class VxGeom:
             rot[i, 0] = np.arctan2(Wt[2, 1], Wt[2, 2])
         return rot.astype(np.float32)
 
-    def get_planar_geometry_and_angles(self) -> tuple[tigre.geometry, np.ndarray]:
-        vecs = self.computePlanarGeom().reshape(-1, 12)
+    def get_planar_geometry_and_angles(self, laminography_method: LaminographyMethodConstants) -> tuple[tigre.geometry, np.ndarray]:
+        if laminography_method == LaminographyMethodConstants.COPLANAR:
+            vecs = VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self.param).reshape(-1, 12)
+        else:
+            vecs = VxComputeGeometry.computeDefaultInclinedLaminographyGeometry(self.param).reshape(-1, 12)
+        
         source = self._astra_to_tigre_points(vecs[:, 0:3])
         detector = self._astra_to_tigre_points(vecs[:, 3:6])
 
@@ -202,53 +165,53 @@ class VxGeom:
     def get_planar_geometry(self) -> tigre.geometry:
         return self.get_planar_geometry_and_angles()[0]
 
-
 class VxTool:
     """Runs a TIGRE reconstruction algorithm given projections and a VxParam."""
 
     _ITERATIVE_ALGORITHMS = {
         # Gradient / ART family
-        "SART": algs.sart,
-        "OS_SART": algs.ossart,
-        "OSSART": algs.ossart,
-        "SIRT": algs.sirt,
-        "ASD_POCS": algs.asd_pocs,
-        "OS_ASD_POCS": algs.os_asd_pocs,
-        "B_ASD_POCS_BETA": algs.asd_pocs,
-        "AW_ASD_POCS": algs.awasd_pocs,
-        "AWASD_POCS": algs.awasd_pocs,
-        "OS_AW_ASD_POCS": algs.os_awasd_pocs,
-        "OS_AWASD_POCS": algs.os_awasd_pocs,
-        "PCSD": algs.pcsd,
-        "OS_PCSD": algs.os_pcsd,
-        "AW_PCSD": algs.aw_pcsd,
-        "AWPCSD": algs.aw_pcsd,
-        "OS_AW_PCSD": algs.os_aw_pcsd,
-        "OS_AWPCSD": algs.os_aw_pcsd,
+        ReconMethodConstants.SART: algs.sart,
+        ReconMethodConstants.OS_SART: algs.ossart,
+        ReconMethodConstants.OSSART: algs.ossart,
+        ReconMethodConstants.SIRT: algs.sirt,
+        ReconMethodConstants.ASD_POCS: algs.asd_pocs,
+        ReconMethodConstants.OS_ASD_POCS: algs.os_asd_pocs,
+        ReconMethodConstants.B_ASD_POCS_BETA: algs.asd_pocs,
+        ReconMethodConstants.AW_ASD_POCS: algs.awasd_pocs,
+        ReconMethodConstants.AWASD_POCS: algs.awasd_pocs,
+        ReconMethodConstants.OS_AW_ASD_POCS: algs.os_awasd_pocs,
+        ReconMethodConstants.OS_AWASD_POCS: algs.os_awasd_pocs,
+        ReconMethodConstants.PCSD: algs.pcsd,
+        ReconMethodConstants.OS_PCSD: algs.os_pcsd,
+        ReconMethodConstants.AW_PCSD: algs.aw_pcsd,
+        ReconMethodConstants.AWPCSD: algs.aw_pcsd,
+        ReconMethodConstants.OS_AW_PCSD: algs.os_aw_pcsd,
+        ReconMethodConstants.OS_AWPCSD: algs.os_aw_pcsd,
         # Krylov subspace family
-        "CGLS": algs.cgls,
-        "LSQR": algs.lsqr,
-        "HYBRID_LSQR": algs.hybrid_lsqr,
-        "H_LSQR": algs.hybrid_lsqr,
-        "LSMR": algs.lsmr,
-        "IRN_TV_CGLS": algs.irn_tv_cgls,
-        "HYBRID_FLSQR_TV": algs.hybrid_flsqr_tv,
-        "H_FLSQR_TV": algs.hybrid_flsqr_tv,
-        "AB_GMRES": algs.ab_gmres,
-        "BA_GMRES": algs.ba_gmres,
-        "AB_BA_GMRES": algs.ab_gmres,
+        ReconMethodConstants.CGLS: algs.cgls,
+        ReconMethodConstants.LSQR: algs.lsqr,
+        ReconMethodConstants.HYBRID_LSQR: algs.hybrid_lsqr,
+        ReconMethodConstants.H_LSQR: algs.hybrid_lsqr,
+        ReconMethodConstants.LSMR: algs.lsmr,
+        ReconMethodConstants.IRN_TV_CGLS: algs.irn_tv_cgls,
+        ReconMethodConstants.HYBRID_FLSQR_TV: algs.hybrid_flsqr_tv,
+        ReconMethodConstants.H_FLSQR_TV: algs.hybrid_flsqr_tv,
+        ReconMethodConstants.AB_GMRES: algs.ab_gmres,
+        ReconMethodConstants.BA_GMRES: algs.ba_gmres,
+        ReconMethodConstants.AB_BA_GMRES: algs.ab_gmres,
         # Statistical / variational
-        "MLEM": algs.mlem,
-        "FISTA": algs.fista,
-        "ISTA": algs.ista,
-        "SART_TV": algs.sart_tv,
-        "OSSART_TV": algs.ossart_tv,
-        "OS_SART_TV": algs.ossart_tv,
+        ReconMethodConstants.MLEM: algs.mlem,
+        ReconMethodConstants.FISTA: algs.fista,
+        ReconMethodConstants.ISTA: algs.ista,
+        ReconMethodConstants.SART_TV: algs.sart_tv,
+        ReconMethodConstants.OSSART_TV: algs.ossart_tv,
+        ReconMethodConstants.OS_SART_TV: algs.ossart_tv,
     }
 
-    def __init__(self, param: VxParam, detector_parallel: bool = False, left_pad: int = 0, right_pad: int = 0):
+    def __init__(self, param: VxParam, laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED, left_pad: int = 0, right_pad: int = 0):
+        self._param = param
         self._geom  = VxGeom(param)
-        self._detector_parallel = detector_parallel
+        self._laminography_method = laminography_method
         self._left_pad = int(left_pad)
         self._right_pad = int(right_pad)
         self.result = None
@@ -293,18 +256,15 @@ class VxTool:
 
         return projections, geo
 
-    def run(self, projections: np.ndarray, algo: str = "FDK", **kwargs) -> np.ndarray:
-        if self._detector_parallel:
-            geo, angles = self._geom.get_planar_geometry_and_angles()
-        else:
-            geo    = self._geom.get_default_geometry()
-            angles = self._geom.get_default_angles()
+    def run(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
+        is_planar = self._laminography_method == LaminographyMethodConstants.COPLANAR
+        geo, angles = self._geom.get_planar_geometry_and_angles(self._laminography_method)
 
         projections, geo = self._extrapolate(projections, geo)
 
         name = self._normalise_algo_name(algo)
-        if name == "FDK":
-            if self._detector_parallel and "dowang" not in kwargs:
+        if name == ReconMethodConstants.FDK:
+            if is_planar and "dowang" not in kwargs:
                 kwargs["dowang"] = False
             self.result = algs.fdk(
                 projections,
@@ -313,18 +273,18 @@ class VxTool:
                 filter=kwargs.pop("filter", "shepp_logan"),
                 **kwargs,
             )
-            if self._detector_parallel:
+            if is_planar:
                 self.result = np.transpose(self.result, (2, 0, 1))
             return self.result
 
         fn = self._ITERATIVE_ALGORITHMS.get(name)
         if fn is None:
-            known = ", ".join(["FDK", *sorted(self._ITERATIVE_ALGORITHMS)])
+            known = ", ".join([ReconMethodConstants.FDK, *sorted(self._ITERATIVE_ALGORITHMS)])
             raise ValueError(f"Unknown algorithm: '{algo}'. Known algorithms: {known}")
 
-        niter = kwargs.pop("niter", kwargs.pop("iterations", NUM_OF_ITERATIONS))
+        niter = kwargs.pop("niter", kwargs.pop("iterations", self._param.iterations))
         self.result = fn(projections, geo, angles, int(niter), **kwargs)
-        if self._detector_parallel:
+        if is_planar:
             if isinstance(self.result, tuple):
                 recon, *extra = self.result
                 self.result = (np.transpose(recon, (2, 0, 1)), *extra)

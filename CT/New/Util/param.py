@@ -1,6 +1,5 @@
 import numpy as np
 
-
 class VxParam:
     def __init__(
         self,
@@ -21,6 +20,7 @@ class VxParam:
         dst_x: float = 0.0,
         dst_y: float = 0.0,
         dst_z: float = 0.0,
+        iterations: int = 1
     ):
         self.sod = sod
         self.sdd = sdd
@@ -40,6 +40,7 @@ class VxParam:
         self.dst_x = dst_x
         self.dst_y = dst_y
         self.dst_z = dst_z
+        self.iterations = iterations
 
     @property
     def num_of_imgs(self) -> int:
