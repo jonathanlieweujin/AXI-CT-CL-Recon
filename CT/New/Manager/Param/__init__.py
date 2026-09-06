@@ -1,4 +1,6 @@
 import numpy as np
+from Manager.Constants.recon_method import ReconMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 class VxParam:
     def __init__(
@@ -20,7 +22,9 @@ class VxParam:
         dst_x: float = 0.0,
         dst_y: float = 0.0,
         dst_z: float = 0.0,
-        iterations: int = 1
+        recon_method: ReconMethodConstants = ReconMethodConstants.FDK,
+        laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED,
+        iterations: int = 1,
     ):
         self.sod = sod
         self.sdd = sdd
@@ -41,6 +45,8 @@ class VxParam:
         self.dst_y = dst_y
         self.dst_z = dst_z
         self.iterations = iterations
+        self.recon_method = recon_method
+        self.laminography_method = laminography_method
 
     @property
     def num_of_imgs(self) -> int:

@@ -1,6 +1,6 @@
 import numpy as np
 
-from Util.param import VxParam
+from Manager.Param import VxParam
 
 class VxComputeGeometry:
     """Laminography geometry builder"""

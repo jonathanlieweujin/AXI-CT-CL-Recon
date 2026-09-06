@@ -1,7 +1,7 @@
 from enum import Enum
 
 class LaminographyMethodConstants(str, Enum):
-    """Laminography geometry identifiers shared by QualityFlow and PerformanceFlow."""
+    """Laminography geometry identifiers shared by the Quality and Performance flows."""
 
     INCLINED = "INCLINED"
     COPLANAR = "COPLANAR"

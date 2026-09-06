@@ -2,7 +2,7 @@ from enum import Enum
 
 
 class VxFlowMethod(str, Enum):
-    """Reconstruction flow selector: QualityFlow (TIGRE) vs PerformanceFlow (ASTRA)."""
+    """Reconstruction flow selector: Quality (TIGRE) vs Performance (ASTRA)."""
 
     QUALITY = "QUALITY"
     PERFORMANCE = "PERFORMANCE"

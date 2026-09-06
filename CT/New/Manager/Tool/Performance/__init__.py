@@ -1,9 +1,9 @@
 import numpy as np
-from Util.param import VxParam
-from Util.recon_method import ReconMethodConstants
-from Util.laminography_method import LaminographyMethodConstants
-from Util.compute_geometry import VxComputeGeometry
-from Util.redundancy_weighting import to_apply_redundancy_weighting
+from Manager.Param import VxParam
+from Manager.Constants.recon_method import ReconMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Util.compute_geometry import VxComputeGeometry
+from Manager.Util.redundancy_weighting import to_apply_redundancy_weighting
 
 class VxTool:
     """Runs an ASTRA reconstruction algorithm given projections and a VxParam."""
@@ -15,7 +15,7 @@ class VxTool:
         self._right_pad = int(right_pad)
         self.result = None
 
-    def run(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK,
+    def run_internal(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK,
             min_constraint: float | None = None, max_constraint: float | None = None) -> np.ndarray:
         match algo.upper():
             case ReconMethodConstants.FDK:
@@ -37,7 +37,7 @@ class VxTool:
                     max_constraint=max_constraint,
                 )
             case _:
-                raise NotImplementedError(f"Algorithm '{algo}' is not implemented in PerformanceFlow.")
+                raise NotImplementedError(f"Algorithm '{algo}' is not implemented in the Performance flow.")
 
         return self.result
 

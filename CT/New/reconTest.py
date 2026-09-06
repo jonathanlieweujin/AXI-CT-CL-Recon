@@ -2,45 +2,43 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
-from Util.param import VxParam
-from Util.load_files import FileLoader
-from Util.recon_method import ReconMethodConstants
-from Util.laminography_method import LaminographyMethodConstants
-from Util.flow_method import VxFlowMethod
-from QualityFlow.get_structure import VxTool as QualityTool
-from PerformanceFlow.get_structure import VxTool as PerformanceTool
+from Manager import VxManager
+from Manager.Param import VxParam
+from Manager.Constants.recon_method import ReconMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Constants.flow_method import VxFlowMethod
 
 # --- Parameters ---
-SRC = r"C:\Users\User\Documents\Dataset\Excillum\LED 70kv\Projections_norm_90cw"
-DetU = 1200
-DetV = 1401
-DetZ = 2000
+SRC = r"C:\Users\User\Documents\Dataset\Button Cell\SOD 34mm SDD 622mm 130kV 500uA 3000 speed Cu Filter\Corrected"
+DetU = 2803
+DetV = 2401
+DetZ = 721
 
 # LEFT_PAD = int(DetU / 2)
 LEFT_PAD = 0
 # RIGHT_PAD = int(DetU / 2)
 RIGHT_PAD = 0
 
-DetPitch = 0.2
-Binning = 2
-Interval = 4
+DetPitch = 0.1
+Binning = 4
+Interval = 2
 Mode = VxFlowMethod.QUALITY
 LaminographyMethod = LaminographyMethodConstants.INCLINED
-ProjectionAngles = np.linspace(0, -360, DetZ, endpoint=True)
+ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 ProjectionAngles = ProjectionAngles[::Interval]
 NumImgs = len(ProjectionAngles)
 
-VolX = 600
-VolY = 600
-VolZ = 300
+VolX = 700
+VolY = 700
+VolZ = 600
 
-SOD = 4.9
-SDD = 490
+SOD = 34
+SDD = 622
 
-DetTiltX = 51
+DetTiltX = 90
 DetTiltY = 0
 
-DetOffsetU = -14.1
+DetOffsetU = -38.52
 DetOffsetV = 0
 
 # Offset in mm
@@ -49,10 +47,6 @@ VolMidY = 0
 VolMidZ = 0
 
 Iterations = 1
-
-# --- Load images ---
-images = FileLoader.loadImages(SRC, DetU, DetV, NumImgs, interval=Interval, binning=Binning)
-print(f"Loaded: {images.shape}")
 
 # --- Build param ---
 param = VxParam(
@@ -73,23 +67,21 @@ param = VxParam(
     dst_x=VolX,
     dst_y=VolY,
     dst_z=VolZ,
+    recon_method=ReconMethodConstants.FDK,
+    laminography_method=LaminographyMethod,
     iterations=Iterations
 )
 
 # --- Reconstruct ---
-if Mode == VxFlowMethod.PERFORMANCE:
-    tool = PerformanceTool(param,
-                     laminography_method=LaminographyMethod,
-                     left_pad=LEFT_PAD,
-                     right_pad=RIGHT_PAD)
-else:
-    tool = QualityTool(param,
-                     laminography_method=LaminographyMethod,
-                     left_pad=LEFT_PAD,
-                     right_pad=RIGHT_PAD)
+manager = VxManager(param,
+                    flow_method=Mode,
+                    left_pad=LEFT_PAD,
+                    right_pad=RIGHT_PAD)
 
-# tool.plot_geometry()
-recon = tool.run(images, algo=ReconMethodConstants.FDK)
+images = manager.LoadImages(SRC, interval=Interval)
+print(f"Loaded: {images.shape}")
+
+recon = manager.Run()
 
 # --- Normalise to 8-bit (global contrast stretch) ---
 r_min = float(recon.min())

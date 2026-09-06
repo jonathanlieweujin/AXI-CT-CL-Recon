@@ -1,4 +1,4 @@
-from Util.laminography_method import LaminographyMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 TILT_X_NOMINAL = 90.0
 TILT_X_TOLERANCE = 0.5

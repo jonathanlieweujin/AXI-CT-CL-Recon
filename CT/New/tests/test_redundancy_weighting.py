@@ -6,8 +6,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Util.laminography_method import LaminographyMethodConstants
-from Util.redundancy_weighting import to_apply_redundancy_weighting
+from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Util.redundancy_weighting import to_apply_redundancy_weighting
 
 INCLINED = LaminographyMethodConstants.INCLINED
 COPLANAR = LaminographyMethodConstants.COPLANAR

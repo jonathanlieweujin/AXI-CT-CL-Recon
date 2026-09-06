@@ -1,13 +1,13 @@
 """
-QualityFlow (TIGRE) and PerformanceFlow (ASTRA) must reconstruct the same
+The Quality (TIGRE) and Performance (ASTRA) flows must reconstruct the same
 volume from the same projections.
 
 Three geometries, each backed by a synthetic dataset on disk whose projections
 were forward-projected from a known phantom:
 
     CT        inclined, DetTiltX = 90
-    CL        inclined, DetTiltX = 55
-    Coplanar  coplanar, DetTiltX = 55
+    CL        inclined, DetTiltX = 51
+    Coplanar  coplanar, DetTiltX = 51
 
 Regenerate the data with:  python tests/make_synthetic_data.py
 """
@@ -20,12 +20,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Util.param import VxParam
-from Util.load_files import FileLoader
-from Util.recon_method import ReconMethodConstants
-from Util.laminography_method import LaminographyMethodConstants
-from QualityFlow.get_structure import VxTool as QualityTool
-from PerformanceFlow.get_structure import VxTool as PerformanceTool
+from Manager import VxManager
+from Manager.Param import VxParam
+from Manager.Constants.recon_method import ReconMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Constants.flow_method import VxFlowMethod
 
 DATASET_ROOT = r"C:\Users\User\Documents\Dataset"
 
@@ -36,8 +35,8 @@ MIN_PHANTOM_AGREEMENT = 0.50
 
 CASES = [
     ("Synthetic CT", LaminographyMethodConstants.INCLINED, 90.0),
-    ("Synthetic CL", LaminographyMethodConstants.INCLINED, 55.0),
-    ("Synthetic Coplanar", LaminographyMethodConstants.COPLANAR, 55.0),
+    ("Synthetic CL", LaminographyMethodConstants.INCLINED, 51.0),
+    ("Synthetic Coplanar", LaminographyMethodConstants.COPLANAR, 51.0),
 ]
 
 
@@ -51,17 +50,11 @@ def load_config(dataset):
     return cfg
 
 
-def build(dataset):
+def build(dataset, method):
     cfg = load_config(dataset)
-    angles = cfg["projectionangles"]
     interval = int(cfg["interval"])
     binning = int(cfg["binning"])
-    angles = angles[::interval]
-
-    images = FileLoader.loadImages(
-        os.path.join(DATASET_ROOT, dataset, "Corrected"),
-        int(cfg["detu"]), int(cfg["detv"]), len(angles),
-        interval=interval, binning=binning)
+    angles = cfg["projectionangles"][::interval]
 
     param = VxParam(
         sod=float(cfg["sod"]), sdd=float(cfg["sdd"]), angles=angles,
@@ -73,10 +66,15 @@ def build(dataset):
         volume_mid_x=float(cfg["volmidx"]), volume_mid_y=float(cfg["volmidy"]),
         volume_mid_z=float(cfg["volmidz"]),
         dst_x=int(cfg["volx"]), dst_y=int(cfg["voly"]), dst_z=int(cfg["volz"]),
+        recon_method=ReconMethodConstants.FDK,
+        laminography_method=method,
         iterations=int(cfg["iterations"]),
     )
+    manager = VxManager(param, flow_method=VxFlowMethod.QUALITY)
+    images = manager.LoadImages(
+        os.path.join(DATASET_ROOT, dataset, "Corrected"), interval=interval)
     phantom = np.load(os.path.join(DATASET_ROOT, dataset, "phantom.npy"))
-    return param, images, phantom, cfg
+    return manager, images, phantom, cfg
 
 
 def corr(a, b):
@@ -94,11 +92,14 @@ def corr(a, b):
 def results():
     out = {}
     for dataset, method, _ in CASES:
-        param, images, phantom, _ = build(dataset)
-        q = QualityTool(param, laminography_method=method).run(
-            images.copy(), algo=ReconMethodConstants.FDK)
-        p = PerformanceTool(param, laminography_method=method).run(
-            images.copy(), algo=ReconMethodConstants.FDK)
+        manager, images, phantom, _ = build(dataset, method)
+
+        manager.FlowMethod = VxFlowMethod.QUALITY
+        q = manager.Run(images.copy())
+
+        manager.FlowMethod = VxFlowMethod.PERFORMANCE
+        p = manager.Run(images.copy())
+
         out[dataset] = (q, p, phantom)
     return out
 
@@ -122,8 +123,8 @@ def test_flows_agree(results, dataset, method, tilt_x):
         f"{dataset}: recon shape {quality.shape} != phantom {phantom.shape}")
 
     # a blank volume correlates with nothing; catch it explicitly
-    assert quality.std() > 0, f"{dataset}: QualityFlow returned a constant volume"
-    assert performance.std() > 0, f"{dataset}: PerformanceFlow returned a constant volume"
+    assert quality.std() > 0, f"{dataset}: Quality flow returned a constant volume"
+    assert performance.std() > 0, f"{dataset}: Performance flow returned a constant volume"
 
     c = corr(quality, performance)
     assert c >= MIN_FLOW_AGREEMENT, f"{dataset}: flows disagree, corr={c:.4f}"
@@ -135,8 +136,8 @@ def test_both_flows_recover_phantom(results, dataset, method, tilt_x):
     quality, performance, phantom = results[dataset]
     cq = corr(quality, phantom)
     cp = corr(performance, phantom)
-    assert cq >= MIN_PHANTOM_AGREEMENT, f"{dataset}: QualityFlow vs phantom corr={cq:.4f}"
-    assert cp >= MIN_PHANTOM_AGREEMENT, f"{dataset}: PerformanceFlow vs phantom corr={cp:.4f}"
+    assert cq >= MIN_PHANTOM_AGREEMENT, f"{dataset}: Quality flow vs phantom corr={cq:.4f}"
+    assert cp >= MIN_PHANTOM_AGREEMENT, f"{dataset}: Performance flow vs phantom corr={cp:.4f}"
 
 
 def test_report(results, capsys):

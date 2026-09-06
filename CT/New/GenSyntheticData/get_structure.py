@@ -4,9 +4,9 @@ from enum import Enum
 import cv2
 import numpy as np
 
-from Util.param import VxParam
-from Util.compute_geometry import VxComputeGeometry
-from Util.laminography_method import LaminographyMethodConstants
+from Manager import VxManager
+from Manager.Param import VxParam
+from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 
 class VxPhantomConstants(str, Enum):
@@ -32,14 +32,32 @@ class VxSyntheticData:
     def __init__(
         self,
         param: VxParam,
-        laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED,
         phantom: VxPhantomConstants = VxPhantomConstants.SOLID,
+        acquisition_param: VxParam = None,
     ):
+        """
+        param            the reconstruction geometry (post-binning), and the
+                         volume grid the phantom lives on.
+        acquisition_param optional unbinned geometry describing the detector the
+                         projections are STORED at. Give this when the dataset
+                         should be written full-resolution and binned on load,
+                         as a real acquisition is. The volume grid always comes
+                         from `param`; only the detector differs.
+
+        The laminography method is read from the params, so the geometry the
+        data is projected through cannot drift from the one it declares.
+        """
         self._param = param
-        self._laminography_method = laminography_method
+        self._acq = acquisition_param if acquisition_param is not None else param
+        if self._acq.laminography_method != param.laminography_method:
+            raise ValueError(
+                "acquisition_param and param disagree on laminography_method: "
+                f"{self._acq.laminography_method} vs {param.laminography_method}")
         self._phantom_kind = phantom
         self.phantom = None
-        self.projections = None
+        # kept in ASTRA order (det_v, n_angles, det_u): the stack is far too
+        # large at full detector resolution to also hold a transposed copy.
+        self._sinogram = None
 
     @property
     def voxel_size(self) -> float:
@@ -80,18 +98,21 @@ class VxSyntheticData:
         self.phantom = vol
         return vol
 
+    @property
+    def n_projections(self) -> int:
+        return self._param.num_of_imgs
+
     def _get_vectors(self) -> np.ndarray:
-        if self._laminography_method == LaminographyMethodConstants.COPLANAR:
-            return VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(
-                self._param).reshape(-1, 12)
-        return VxComputeGeometry.computeDefaultInclinedLaminographyGeometry(
-            self._param).reshape(-1, 12)
+        # Built from the acquisition geometry: the U/V vectors carry the
+        # detector pitch the projections are stored at.
+        return VxManager(self._acq).GetScanGeometry()
 
     def project(self, phantom: np.ndarray = None) -> np.ndarray:
-        """Forward project to (angles, det_v, det_u), the layout VxTool.run expects."""
+        """Forward project. Returns the sinogram in ASTRA (det_v, angles, det_u) order."""
         import astra
 
         p = self._param
+        acq = self._acq
         if phantom is None:
             phantom = self.phantom if self.phantom is not None else self.build_phantom()
 
@@ -106,31 +127,33 @@ class VxSyntheticData:
             -half_z + p.volume_mid_z, half_z + p.volume_mid_z,
         )
         proj_geom = astra.create_proj_geom(
-            'cone_vec', p.det_height, p.det_width, self._get_vectors())
+            'cone_vec', int(acq.det_height), int(acq.det_width), self._get_vectors())
 
         proj_id, proj = astra.create_sino3d_gpu(phantom, proj_geom, vol_geom)
         astra.data3d.delete(proj_id)
 
-        self.projections = np.ascontiguousarray(
-            np.transpose(proj, (1, 0, 2)).astype(np.float32))
-        return self.projections
+        self._sinogram = proj
+        return self._sinogram
 
     def build_config(self) -> str:
         """
         geometry.config describing this dataset.
 
-        VxParam already divided the detector geometry by its binning factor, so
-        the config is written in those post-binned terms with Binning = 1.
-        Writing the original binning back would apply it a second time when the
-        config is read into a fresh VxParam.
+        The detector fields describe the resolution the projections are STORED
+        at, paired with the binning that reproduces `param` when the config is
+        read back. Without an acquisition_param the stored resolution is already
+        binned, so Binning is 1 - writing the original factor there would apply
+        it a second time.
         """
         p = self._param
+        acq = self._acq
+        binning = p.binning if acq is not p else 1
         angles = ", ".join(f"{a:g}" for a in np.asarray(p.angles))
         return f"""[VXMPR CONFIG]
 
-DetU = {int(p.det_width)}
-DetV = {int(p.det_height)}
-DetPitch = {p.det_pitch:g}
+DetU = {int(acq.det_width)}
+DetV = {int(acq.det_height)}
+DetPitch = {acq.det_pitch:g}
 ProjectionImages = {p.num_of_imgs}
 
 VolScale = 1
@@ -143,7 +166,7 @@ VolMidY = {p.volume_mid_y:g}
 VolMidZ = {p.volume_mid_z:g}
 
 Interval = 1
-Binning = 1
+Binning = {binning}
 ProjectionAngles = [{angles}]
 
 SOD = {p.sod:g}
@@ -152,8 +175,8 @@ SDD = {p.sdd:g}
 DetTiltX = {p.tilt_x:g}
 DetTiltY = {p.tilt_y:g}
 
-DetOffsetU = {p.offset_u:g}
-DetOffsetV = {p.offset_v:g}
+DetOffsetU = {acq.offset_u:g}
+DetOffsetV = {acq.offset_v:g}
 
 LeftPad = 0
 RightPad = 0
@@ -161,12 +184,12 @@ RightPad = 0
 Filter = SheppLogan
 ReconType = FDK
 Iterations = {p.iterations}
-LaminographyMethod = {self._laminography_method}
+LaminographyMethod = {p.laminography_method}
 """
 
     def write(self, root: str) -> str:
         """Write Corrected/, Config/geometry.config and phantom.npy under root."""
-        if self.projections is None:
+        if self._sinogram is None:
             self.project()
 
         corrected = os.path.join(root, "Corrected")
@@ -174,8 +197,11 @@ LaminographyMethod = {self._laminography_method}
         os.makedirs(corrected, exist_ok=True)
         os.makedirs(config_dir, exist_ok=True)
 
-        for i in range(self.projections.shape[0]):
-            cv2.imwrite(os.path.join(corrected, f"proj_{i:04d}.tif"), self.projections[i])
+        # slice per angle out of the ASTRA-order stack rather than transposing
+        # the whole thing, which would double peak memory
+        for i in range(self.n_projections):
+            frame = np.ascontiguousarray(self._sinogram[:, i, :], dtype=np.float32)
+            cv2.imwrite(os.path.join(corrected, f"proj_{i:04d}.tif"), frame)
 
         with open(os.path.join(config_dir, "geometry.config"), "w", encoding="utf-8") as f:
             f.write(self.build_config())

@@ -4,11 +4,11 @@ import numpy as np
 import tigre
 import tigre.algorithms as algs
 from tigre.utilities.common_geometry import ArbitrarySourceDetMoveGeo
-from Util.param import VxParam
-from Util.recon_method import ReconMethodConstants
-from Util.laminography_method import LaminographyMethodConstants
-from Util.compute_geometry import VxComputeGeometry
-from Util.redundancy_weighting import to_apply_redundancy_weighting
+from Manager.Param import VxParam
+from Manager.Constants.recon_method import ReconMethodConstants
+from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Util.compute_geometry import VxComputeGeometry
+from Manager.Util.redundancy_weighting import to_apply_redundancy_weighting
 
 def _rot_z(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
@@ -35,7 +35,7 @@ class VxGeom:
 
     def _rig_rotation(self, tilt_x_deg: float, angles_deg: np.ndarray) -> np.ndarray:
         """
-        (N, 3, 3) rig rotation stack, identical rows to PerformanceFlow's
+        (N, 3, 3) rig rotation stack, identical rows to the Performance flow's
         computeDefaultInclinedLaminographyGeometry: R = Rx(-tilt_x) · Ry(tilt_y) · Rz(phi),
         phi = -deg2rad(angles).
         """
@@ -264,7 +264,7 @@ class VxTool:
 
         return projections, geo
 
-    def run(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
+    def run_internal(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
         is_planar = self._laminography_method == LaminographyMethodConstants.COPLANAR
         if is_planar:
             geo, angles = self._geom.get_planar_geometry_and_angles()
