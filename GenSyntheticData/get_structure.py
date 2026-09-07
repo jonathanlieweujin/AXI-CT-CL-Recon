@@ -6,7 +6,7 @@ import numpy as np
 
 from Manager import VxManager
 from Manager.Param import VxParam
-from Manager.Constants.laminography_method import LaminographyMethodConstants
+# from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 
 class VxPhantomConstants(str, Enum):
@@ -184,7 +184,6 @@ RightPad = 0
 Filter = SheppLogan
 ReconType = FDK
 Iterations = {p.iterations}
-LaminographyMethod = {p.laminography_method}
 """
 
     def write(self, root: str) -> str:
