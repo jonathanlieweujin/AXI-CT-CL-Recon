@@ -27,6 +27,7 @@ the package rather than in separate scripts.
   - [3. Install TIGRE](#3-install-tigre)
   - [4. Verify](#4-verify)
 - [Running](#running)
+- [Synthetic data](#synthetic-data)
 - [Tests](#tests)
 - [Notes](#notes)
 
@@ -63,7 +64,8 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 | `Manager/Util/redundancy_weighting.py` | `to_apply_redundancy_weighting`: decides when Wang redundancy weights apply (offset detector, upright CT geometry only). |
 | `Manager/Tool/Quality/__init__.py` | TIGRE backend (`VxTool`, `VxGeom`): builds the TIGRE geometry and runs reconstruction. |
 | `Manager/Tool/Performance/__init__.py` | ASTRA backend (`VxTool`): same interface, ASTRA toolbox, plus `plot_geometry` for inspecting the scan vectors. |
-| `GenSyntheticData/get_structure.py` | `VxSyntheticData`: builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. |
+| `syntheticTest.py` | Entry point: sets the acquisition geometry and writes a synthetic dataset (with a commented-out projection viewer). |
+| `SyntheticDataGenerator/__init__.py` | `VxSyntheticDataGenerator`: the generator entry point. Derives the binned/unbinned parameter pair, builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. See [Synthetic data](#synthetic-data). |
 | `tests/` | Pytest suite: flow equivalence and redundancy weighting, plus the synthetic dataset generator they run against. |
 
 ## Manager
@@ -228,6 +230,51 @@ Before running, check the parameters at the top of `reconTest.py`:
 - `VolX` / `VolY` / `VolZ` and `VolMid*`: output volume size and centre
 - `LEFT_PAD` / `RIGHT_PAD`: projection padding, used to suppress truncation artefacts
 - `Iterations`: iteration count for the iterative algorithms (ignored by `FDK`)
+
+## Synthetic data
+
+`VxSyntheticDataGenerator` (`SyntheticDataGenerator/__init__.py`) builds a
+dataset the recon flows can be checked against: a phantom, the projections that
+geometry would produce, and a `Corrected/` + `Config/` pair matching the layout
+of a real acquisition. Because the projections are forward-projected through the
+same geometry the backends rebuild, a correct backend reconstructs the phantom
+that produced them.
+
+It mirrors `VxManager`: construct, set the params, generate.
+
+```powershell
+.venv\python.exe syntheticTest.py
+```
+
+```python
+from SyntheticDataGenerator import VxSyntheticDataGenerator, VxPhantomConstants
+
+generator = VxSyntheticDataGenerator(phantom=VxPhantomConstants.SLAB)
+generator.SetParams(angles=ProjectionAngles, sod=SOD, sdd=SDD,
+                    det_width=DetU, det_height=DetV, det_pitch=DetPitch,
+                    volume=(VolX, VolY, VolZ), tilt_x=DetTiltX, binning=Binning,
+                    laminography_method=LaminographyMethod)
+generator.Generate(DST)
+print(generator.Describe())
+```
+
+| Method | What it does |
+| --- | --- |
+| `SetParams(...)` | Derives the two geometries a dataset needs from one unbinned detector description: the reconstruction geometry (binned, and the volume grid the phantom lives on) and the acquisition geometry (unbinned, the detector the projections are stored at). Returns the reconstruction param. |
+| `Run()` | Builds the phantom and forward-projects it. Leaves the phantom on `Volume` and the projections on `Sinogram`, in ASTRA `(det_v, angles, det_u)` order. |
+| `Save(root)` | Writes `Corrected/`, `Config/geometry.config` and `phantom.npy` under `root`. Projects first if `Run` has not been called. |
+| `Generate(root)` | `Run` then `Save`, in one call. |
+| `VoxelSize` / `NumProjections` | Derived geometry values. |
+| `Describe()` | One-line summary of what was generated, for progress output. |
+
+`VxPhantomConstants` selects the shape: `SOLID` (sphere plus an off-centre rod,
+so a mirrored reconstruction cannot score as a match) or `SLAB` (a thin plate
+with in-plane structure, the laminography case).
+
+Storing at full detector resolution and binning on load is what a real
+acquisition does, so `binning` is applied to the reconstruction geometry only.
+With `binning=1` the two geometries are the same object, which is how the written
+config knows binning has not already been applied.
 
 ## Tests
 
