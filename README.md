@@ -70,7 +70,7 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 
 `VxManager` (`Manager/__init__.py`) is the single entry point for a
 reconstruction. It owns the parameters, both backends, the loaded projections and
-the resulting volume, so a run is construct → load → run:
+the resulting volume:
 
 ```python
 from Manager import VxManager
@@ -79,7 +79,8 @@ from Manager.Constants.flow_method import VxFlowMethod
 
 manager = VxManager(param, flow_method=VxFlowMethod.QUALITY, left_pad=0, right_pad=0)
 manager.LoadImages(SRC, interval=1)
-volume = manager.Run()
+manager.Run()
+volume = manager.Result
 ```
 
 ### Capabilities
@@ -88,7 +89,7 @@ volume = manager.Run()
 | --- | --- |
 | `LoadImages(input_folder, interval=1)` | Loads the `.tif` projection stack described by `Param`: restores the pre-binning detector size, applies `interval` sub-sampling and `binning`, and resamples to exactly `Param.num_of_imgs` frames. Returns and caches the stack as `Images`. |
 | `SaveImages(output_folder, images=None, savePad=None)` | Writes a stack to `output_folder` as `slice_XXXX.tif`, one file per frame, threaded. Defaults to the cached `Images`. The index width is derived from the stack length unless `savePad` forces one, so the names always sort in stack order. |
-| `Run(projections=None, **kwargs)` | Reconstructs with the backend selected by `FlowMethod` and the algorithm on `Param.recon_method`. Falls back to the cached `Images` when no stack is passed; extra `kwargs` (`filter`, `niter`, …) go straight to the backend algorithm. Returns and caches `Result`. |
+| `Run(projections=None, **kwargs)` | Reconstructs with the backend selected by `FlowMethod` and the algorithm on `Param.recon_method`. Falls back to the cached `Images` when no stack is passed; extra `kwargs` (`filter`, `niter`, …) go straight to the backend algorithm. |
 | `GetScanGeometry()` | Returns the `(n, 12)` ASTRA `cone_vec` rows `[Sx Sy Sz  Dx Dy Dz  Ux Uy Uz  Vx Vy Vz]` for the current parameters. |
 | `NormaliseProjections(srcPath, dstPath, toApplyLogTransform=True, savePad=None)` | Loads a raw stack, scales it to `[0, 1]` on a single global min/max, optionally applies the Beer–Lambert `-log(x + eps)` transform, and hands the result to `SaveImages` for `dstPath`. Returns the normalised stack and caches it as `Images`. |
 

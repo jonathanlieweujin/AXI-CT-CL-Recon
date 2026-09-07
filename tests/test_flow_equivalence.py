@@ -95,10 +95,12 @@ def results():
         manager, images, phantom, _ = build(dataset, method)
 
         manager.FlowMethod = VxFlowMethod.QUALITY
-        q = manager.Run(images.copy())
+        manager.Run(images.copy())
+        q = manager.Result
 
         manager.FlowMethod = VxFlowMethod.PERFORMANCE
-        p = manager.Run(images.copy())
+        manager.Run(images.copy())
+        p = manager.Result
 
         out[dataset] = (q, p, phantom)
     return out

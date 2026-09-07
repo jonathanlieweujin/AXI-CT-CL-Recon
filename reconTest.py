@@ -81,7 +81,8 @@ manager = VxManager(param,
 images = manager.LoadImages(SRC, interval=Interval)
 print(f"Loaded: {images.shape}")
 
-recon = manager.Run()
+manager.Run()
+recon = manager.Result
 
 # --- Normalise to 8-bit (global contrast stretch) ---
 r_min = float(recon.min())

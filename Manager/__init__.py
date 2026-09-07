@@ -95,8 +95,12 @@ class VxManager:
 
         return output_folder
 
-    def Run(self, projections: np.ndarray = None, **kwargs) -> np.ndarray:
-        """Reconstruct with the backend selected by FlowMethod."""
+    def Run(self, projections: np.ndarray = None, **kwargs):
+        """
+        Reconstruct with the backend selected by FlowMethod.
+
+        The volume is left on Result rather than returned.
+        """
         if projections is None:
             if self.Images is None:
                 raise ValueError("No projections: call LoadImages first or pass them to Run.")
@@ -104,7 +108,6 @@ class VxManager:
 
         tool = self.activeTool_Internal()
         self.Result = tool.run_internal(projections, algo=self.ReconMethod, **kwargs)
-        return self.Result
 
     def GetScanGeometry(self) -> np.ndarray:
         """
