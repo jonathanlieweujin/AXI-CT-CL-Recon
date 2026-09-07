@@ -43,7 +43,7 @@ Both modes share the same code path; the geometry decides which one you get:
 Switch backend with `Mode = VxFlowMethod.QUALITY` (TIGRE) or
 `Mode = VxFlowMethod.PERFORMANCE` (ASTRA) in `reconTest.py`.
 
-*Ref: Fisher, S., Mavrogordato, M. N., Blumensath, T., & Boardman, R. P. (2019).
+*Fisher, S., Mavrogordato, M. N., Blumensath, T., & Boardman, R. P. (2019).
 Laminography in the lab: Imaging planar objects using a conventional x-ray CT
 scanner. Measurement Science and Technology, 30(3), Article 035401.
 <https://iopscience.iop.org/article/10.1088/1361-6501/aafcae/pdf>*
@@ -128,7 +128,7 @@ and the pixel axes taken from the same rotation. Because a `tilt_x` of 90° is
 just an untilted detector, ordinary circular CT falls out of this builder rather
 than needing a path of its own.
 
-*Ref: Van Aarle, W., Palenstijn, W. J., Cant, J., Janssens, E., Bleichrodt, F.,
+*Van Aarle, W., Palenstijn, W. J., Cant, J., Janssens, E., Bleichrodt, F.,
 Dabravolski, A., De Beenhouwer, J., Batenburg, K. J., & Sijbers, J. (2016). Fast
 and flexible X-ray tomography using the ASTRA toolbox. Optics Express, 24(22),
 25129–25145. <https://doi.org/10.1364/OE.24.025129>*
@@ -137,7 +137,7 @@ and flexible X-ray tomography using the ASTRA toolbox. Optics Express, 24(22),
 detector flat and physically traverse the source/detector pair across the tilted
 orbit. `SOD`/`SDD` are read as axial distances along Z, and detector offsets move the centre along the fixed `U`/`V` axes.
 
-*Ref: Porsch, F. (2010). Computed Laminography for X-ray Inspection of
+*Porsch, F. (2010). Computed Laminography for X-ray Inspection of
 Lightweight Constructions.
 <https://www.academia.edu/download/82596285/mo3a3.pdf>*
 
