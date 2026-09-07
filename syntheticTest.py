@@ -6,7 +6,7 @@ from SyntheticDataGenerator import VxSyntheticDataGenerator, VxPhantomConstants
 from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
-DST = r"F:\\Dataset\\Synthetic\\HBM"
+DST = r"path"
 DetU = 1200
 DetV = 1401
 DetZ = 721
