@@ -12,7 +12,6 @@ from Manager.Util.load_images_internal import FileLoader
 from Manager.Tool.Performance import VxTool as VxPerformanceTool
 from Manager.Tool.Quality import VxTool as VxQualityTool
 
-
 class VxManager:
     """
     Single entry point for a reconstruction: holds the parameters, both backend
@@ -22,6 +21,7 @@ class VxManager:
     the recon method on VxParam chooses the algorithm (FDK, SIRT, CGLS, ...).
     """
 
+    # Constructor
     def __init__(
         self,
         param: VxParam,
@@ -42,8 +42,7 @@ class VxManager:
             param, laminography_method=param.laminography_method,
             left_pad=left_pad, right_pad=right_pad)
 
-    # ------------------------------------------------------------------ public
-
+    # Public
     def LoadImages(self, input_folder: str, interval: int = 1) -> np.ndarray:
         """
         Load the projection stack described by Param from input_folder.
@@ -64,6 +63,37 @@ class VxManager:
             binning=p.binning,
         )
         return self.Images
+
+    def SaveImages(self,
+                   output_folder: str,
+                   images: np.ndarray = None,
+                   savePad: str = None) -> str:
+        """
+        Write a projection stack to output_folder as slice_XXXX.tif files, one
+        per frame, in stack order and at the stack's own dtype. Defaults to the
+        cached Images. Returns output_folder.
+
+        Writes are threaded; the index in the name carries the order, not the
+        completion order. savePad is the format spec for that index - left as
+        None it is derived from the stack length (at least "04d", wider for
+        stacks past 9999) so the names always sort in stack order.
+        """
+        if images is None:
+            if self.Images is None:
+                raise ValueError("No projections: call LoadImages first or pass them to SaveImages.")
+            images = self.Images
+
+        os.makedirs(output_folder, exist_ok=True)
+        if savePad is None:
+            savePad = f"0{max(4, len(str(max(1, len(images)) - 1)))}d"
+
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(self.save_Internal, output_folder, savePad, i, img)
+                       for i, img in enumerate(images)]
+            for future in as_completed(futures):
+                future.result()
+
+        return output_folder
 
     def Run(self, projections: np.ndarray = None, **kwargs) -> np.ndarray:
         """Reconstruct with the backend selected by FlowMethod."""
@@ -102,10 +132,8 @@ class VxManager:
         attenuation values with -log(x + eps). Saved as float32 .tif files named
         slice_0000.tif ... in stack order, and the stack is returned.
 
-        savePad is the format spec for the index in those names. Left as None it
-        is derived from the stack length (at least "04d", wider for stacks past
-        9999) so the names always sort in stack order; pass e.g. "06d" to force a
-        width.
+        savePad is passed through to SaveImages, which derives it from the stack
+        length when left as None.
         """
 
         # epsilon constant
@@ -116,7 +144,6 @@ class VxManager:
             raise NotADirectoryError(f"Source folder does not exist: {srcPath}")
         if os.path.abspath(srcPath) == os.path.abspath(dstPath):
             raise ValueError("dstPath must differ from srcPath.")
-        os.makedirs(dstPath, exist_ok=True)
 
         # load images LoadImages
         stack = self.LoadImages(srcPath)
@@ -134,20 +161,13 @@ class VxManager:
             out = -np.log(out + eps)
         out = out.astype(np.float32)
 
-        # save - pad the index wide enough that the names sort in stack order
-        if savePad is None:
-            savePad = f"0{max(4, len(str(len(out) - 1)))}d"
-
-        with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self.save_Internal, dstPath, savePad, i, img)
-                       for i, img in enumerate(out)]
-            for future in as_completed(futures):
-                future.result()
+        # save
+        self.SaveImages(dstPath, out, savePad=savePad)
 
         self.Images = out
         return out
 
-    # ----------------------------------------------------------------- private
+    # private / internal
 
     def activeTool_Internal(self):
         """Pick the backend that matches FlowMethod."""

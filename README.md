@@ -1,8 +1,8 @@
-# CT / CL Reconstruction Module
+# CT / CL AXI Reconstruction Module
 
 Cone-beam CT (computed tomography) and CL (computed laminography) reconstruction
 driven from a single parameter object, with two interchangeable GPU backends —
-TIGRE ("Quality") and the ASTRA Toolbox ("Performance") — behind one API.
+TIGRE ("Quality") and the ASTRA Toolbox ("Performance")
 
 The two flows are held to the same result: `tests/test_flow_equivalence.py`
 reconstructs synthetic datasets of known phantoms through both and requires the
@@ -15,13 +15,13 @@ the package rather than in separate scripts.
 | Path | Purpose |
 | --- | --- |
 | `reconTest.py` | Entry point — sets geometry/volume parameters, loads projections, reconstructs, and displays slices with a slider. |
-| `Manager/__init__.py` | `VxManager` — the single entry point: owns the parameters, both backends, the projections and the result. See [Manager](#manager). |
+| `Manager/__init__.py` | `VxManager` — the single entry point: owns the parameters, both backends, the projections and the result. `LoadImages` / `SaveImages` read and write a projection stack, `NormaliseProjections` conditions one, `Run` reconstructs. See [Manager](#manager). |
 | `Manager/Param/__init__.py` | `VxParam` — the shared geometry/acquisition parameter container. Applies binning to the detector size, pitch and offsets on construction. |
 | `Manager/Constants/flow_method.py` | `VxFlowMethod` — backend selector enum (`QUALITY` / `PERFORMANCE`). |
 | `Manager/Constants/laminography_method.py` | `LaminographyMethodConstants` — geometry selector enum (`INCLINED` / `COPLANAR`). |
 | `Manager/Constants/recon_method.py` | `ReconMethodConstants` — reconstruction algorithm identifiers (`FDK`, `CGLS`, `SIRT`, …). |
 | `Manager/Util/compute_geometry.py` | `VxComputeGeometry` — the shared coplanar/inclined ASTRA `cone_vec` geometry builders used by both backends. |
-| `Manager/Util/load_images_internal.py` | `FileLoader` — reads raw projection stacks with interval and binning, threaded across the stack. |
+| `Manager/Util/load_images_internal.py` | `FileLoader` — reads raw projection stacks with interval and binning, threaded across the stack. Backs `VxManager.LoadImages`; the matching writes live in `VxManager.SaveImages`. |
 | `Manager/Util/redundancy_weighting.py` | `to_apply_redundancy_weighting` — decides when Wang redundancy weights apply (offset detector, upright CT geometry only). |
 | `Manager/Tool/Quality/__init__.py` | TIGRE backend (`VxTool`, `VxGeom`) — builds the TIGRE geometry and runs reconstruction. |
 | `Manager/Tool/Performance/__init__.py` | ASTRA backend (`VxTool`) — same interface, ASTRA toolbox, plus `plot_geometry` for inspecting the scan vectors. |
@@ -62,9 +62,10 @@ volume = manager.Run()
 | Method | What it does |
 | --- | --- |
 | `LoadImages(input_folder, interval=1)` | Loads the `.tif` projection stack described by `Param` — restores the pre-binning detector size, applies `interval` sub-sampling and `binning`, and resamples to exactly `Param.num_of_imgs` frames. Returns and caches the stack as `Images`. |
+| `SaveImages(output_folder, images=None, savePad=None)` | Writes a stack to `output_folder` as `slice_XXXX.tif`, one file per frame, threaded. Defaults to the cached `Images`. The index width is derived from the stack length unless `savePad` forces one, so the names always sort in stack order. |
 | `Run(projections=None, **kwargs)` | Reconstructs with the backend selected by `FlowMethod` and the algorithm on `Param.recon_method`. Falls back to the cached `Images` when no stack is passed; extra `kwargs` (`filter`, `niter`, …) go straight to the backend algorithm. Returns and caches `Result`. |
 | `GetScanGeometry()` | Returns the `(n, 12)` ASTRA `cone_vec` rows `[Sx Sy Sz  Dx Dy Dz  Ux Uy Uz  Vx Vy Vz]` for the current parameters — the same vectors the Performance flow reconstructs from, and what synthetic phantom data must be forward-projected through. |
-| `NormaliseProjections(srcPath, dstPath, toApplyLogTransform=True, savePad=None)` | Loads a raw stack, scales it to `[0, 1]` on a single global min/max, optionally applies the Beer–Lambert `-log(x + eps)` transform, and writes float32 `slice_XXXX.tif` files to `dstPath` (threaded). The index width is derived from the stack length unless `savePad` forces one. Returns the normalised stack and caches it as `Images`. |
+| `NormaliseProjections(srcPath, dstPath, toApplyLogTransform=True, savePad=None)` | Loads a raw stack, scales it to `[0, 1]` on a single global min/max, optionally applies the Beer–Lambert `-log(x + eps)` transform, and hands the result to `SaveImages` for `dstPath`. Returns the normalised stack and caches it as `Images`. |
 
 ### State
 
@@ -81,6 +82,33 @@ Padding (`left_pad` / `right_pad`) is edge-extrapolated onto the detector by the
 backend and the detector centre is shifted to match, which suppresses truncation
 artefacts without changing the caller's geometry.
 
+### Geometry
+
+`Param.laminography_method` picks which builder in `VxComputeGeometry` produces
+the scan vectors. Both return the same `(n, 12)` ASTRA `cone_vec` rows, so
+`GetScanGeometry()` and both backends stay geometry-agnostic — only the vectors
+differ.
+
+| | `INCLINED` (default) | `COPLANAR` |
+| --- | --- | --- |
+| Detector | Tilted, rotates with the rig — pixel axes differ per projection | Stays flat in the world frame — `U = (pitch, 0, 0)`, `V = (0, pitch, 0)` for every projection |
+| Motion | Source and detector orbit on a rotation `R = Rx(-θ)·Ry(β)·Rz(-φ)`, θ from `tilt_x`, β from `tilt_y` | Source and detector translate on an XY orbit at fixed axial Z; the tilt only shifts them in-plane by `z·tan(tilt_x)` |
+| `tilt_y` | Honoured | Ignored — `tilt_x` alone defines the orbit |
+| Covers CT | Yes — CT is the `tilt_x = 90` case of this builder | No |
+| Wang redundancy weighting | Available (offset detector, `tilt_x ≈ 90` only) | Never applied |
+
+**Inclined** is the general case: a genuinely tilted detector carried around the
+rotation, with the source and detector placed along opposite ends of the rig axis
+and the pixel axes taken from the same rotation. Because a `tilt_x` of 90° is
+just an untilted detector, ordinary circular CT falls out of this builder rather
+than needing a path of its own.
+Ref: Van Aarle, W., Palenstijn, W. J., Cant, J., Janssens, E., Bleichrodt, F., Dabravolski, A., De Beenhouwer, J., Batenburg, K. J., & Sijbers, J. (2016). Fast and flexible X-ray tomography using the ASTRA toolbox. Optics Express, 24(22), 25129–25145. https://doi.org/10.1364/OE.24.025129 
+
+**Coplanar** models the other way to get laminographic sampling: keep the
+detector flat and physically traverse the source/detector pair across the tilted
+orbit. `SOD`/`SDD` are read as axial distances along Z, and detector offsets move the centre along the fixed `U`/`V` axes.
+Ref: Porsch, F. (2010). Computed Laminography for X-ray Inspection of Lightweight Constructions. https://www.academia.edu/download/82596285/mo3a3.pdf
+
 ## Requirements
 
 - Python 3.13 (required — the TIGRE build is a `cp313` extension)
@@ -92,7 +120,7 @@ artefacts without changing the caller's geometry.
   - [TIGRE](https://github.com/CERN/TIGRE) — built from source, see Installation
   - [ASTRA Toolbox](https://astra-toolbox.com/) — `astra-toolbox` on PyPI
 
-## Installation
+## Pre-Requisites
 
 The environment lives at `.venv` in the repository root and is created with conda
 (Miniconda), because ASTRA and TIGRE both need a CUDA-aware Python.

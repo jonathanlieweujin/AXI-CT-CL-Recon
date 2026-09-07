@@ -61,3 +61,4 @@ logs/
 # --- Local overrides ---
 *.local
 local_config.py
+reconTest2.py

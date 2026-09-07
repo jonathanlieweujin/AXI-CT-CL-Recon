@@ -9,7 +9,7 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 from Manager.Constants.flow_method import VxFlowMethod
 
 # --- Parameters ---
-SRC = r"C:\Users\User\Documents\Dataset\Button Cell\SOD 34mm SDD 622mm 130kV 500uA 3000 speed Cu Filter\Corrected"
+SRC = r"path"
 DetU = 2803
 DetV = 2401
 DetZ = 721
