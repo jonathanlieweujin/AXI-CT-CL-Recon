@@ -13,7 +13,8 @@ class VxPhantomConstants(str, Enum):
     """Phantom shapes available to the synthetic data generator."""
 
     SOLID = "SOLID"
-    SLAB = "SLAB"
+    SLAB  = "SLAB"
+    HBM   = "HBM"    # HBM high-mag board cross-section (μbumps / C4 / BGA)
 
     def __str__(self) -> str:
         return self.value
@@ -175,34 +176,17 @@ class VxSyntheticDataGenerator:
         """Phantom in ASTRA (z, y, x) order."""
         p = self.Param
         vol_x, vol_y, vol_z = int(p.dst_x), int(p.dst_y), int(p.dst_z)
-        vol = np.zeros((vol_z, vol_y, vol_x), dtype=np.float32)
-        z, y, x = np.meshgrid(np.arange(vol_z), np.arange(vol_y), np.arange(vol_x), indexing="ij")
-        cz, cy, cx = vol_z / 2.0, vol_y / 2.0, vol_x / 2.0
+        shape = (vol_z, vol_y, vol_x)
+        vs = self.VoxelSize
 
+        if self.PhantomKind == VxPhantomConstants.HBM:
+            from SyntheticDataGenerator.Structures.hbm import HBMStructure
+            return HBMStructure.GetStructure(shape, vs)
         if self.PhantomKind == VxPhantomConstants.SOLID:
-            r = min(vol_x, vol_y, vol_z) * 0.34
-            vol[(z - cz) ** 2 + (y - cy) ** 2 + (x - cx) ** 2 < r ** 2] = 1.0
-            # off-centre rod, so a mirrored reconstruction cannot score as a match
-            r2 = min(vol_x, vol_y) * 0.12
-            vol[(y - cy) ** 2 + (x - cx - vol_x * 0.16) ** 2 < r2 ** 2] = 2.0
-            vol[int(cz - vol_z * 0.30):int(cz - vol_z * 0.18),
-                int(cy - vol_y * 0.22):int(cy + vol_y * 0.22),
-                int(cx - vol_x * 0.30):int(cx - vol_x * 0.10)] = 1.6
-        else:
-            # thin slab with in-plane structure: the laminography use case
-            z0, z1 = int(cz - vol_z * 0.22), int(cz + vol_z * 0.22)
-            vol[z0:z1, int(vol_y * 0.18):int(vol_y * 0.82),
-                int(vol_x * 0.18):int(vol_x * 0.82)] = 0.6
-            for k in range(4):
-                yk = int(vol_y * (0.28 + 0.14 * k))
-                vol[z0:z1, yk:yk + 4, int(vol_x * 0.24):int(vol_x * 0.76)] = 1.8
-            r = min(vol_x, vol_y) * 0.07
-            disc = (y - cy) ** 2 + (x - cx + vol_x * 0.22) ** 2 < r ** 2
-            disc[:z0] = False
-            disc[z1:] = False
-            vol[disc] = 2.4
-
-        return vol
+            from SyntheticDataGenerator.Structures.solid import SolidStructure
+            return SolidStructure.GetStructure(shape, vs)
+        from SyntheticDataGenerator.Structures.slab import SlabStructure
+        return SlabStructure.GetStructure(shape, vs)
 
     def getVectors_Internal(self) -> np.ndarray:
         # Built from the acquisition geometry: the U/V vectors carry the
