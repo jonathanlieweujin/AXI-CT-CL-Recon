@@ -7,19 +7,19 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
 DST = r"path"
-DetU = 1401
-DetV = 1200
+DetU = 2803
+DetV = 2401
 DetZ = 721
 
-DetPitch = 0.2
-Binning = 2
+DetPitch = 0.084
+Binning = 1
 LaminographyMethod = LaminographyMethodConstants.INCLINED
 Phantom = VxPhantomConstants.SOLID
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 
-VolX = 700
-VolY = 700
-VolZ = 600
+VolX = 2803
+VolY = 2803
+VolZ = 2401
 
 SOD = 4.9
 SDD = 490
