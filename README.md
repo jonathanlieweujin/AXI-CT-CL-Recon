@@ -1,8 +1,10 @@
 # Overview
 
 Cone-beam CT (computed tomography) and CL (computed laminography) reconstruction
-driven from a single parameter object, with two interchangeable GPU backends —
-TIGRE ("Quality") and the ASTRA Toolbox ("Performance")
+driven from a single parameter object, with two interchangeable GPU backends, Quality that utilises TIGRE framework and Performance that utilises ASTRA Toolbox framework.
+
+*ASTRA Toolbox: <https://github.com/astra-toolbox/astra-toolbox>*  
+*TIGRE Toolbox: <https://github.com/CERN/TIGRE>*
 
 The two flows are held to the same result: `tests/test_flow_equivalence.py`
 reconstructs synthetic datasets of known phantoms through both and requires the
