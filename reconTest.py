@@ -31,6 +31,7 @@ NumImgs = len(ProjectionAngles)
 VolX = 700
 VolY = 700
 VolZ = 600
+DstPixelFormat = "u8"
 
 SOD = 34
 SDD = 622
@@ -67,6 +68,7 @@ param = VxParam(
     dst_x=VolX,
     dst_y=VolY,
     dst_z=VolZ,
+    dst_pixel_format=DstPixelFormat,
     recon_method=ReconMethodConstants.FDK,
     laminography_method=LaminographyMethod,
     iterations=Iterations

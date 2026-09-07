@@ -7,6 +7,7 @@ import numpy as np
 from Manager.Param import VxParam
 from Manager.Constants.flow_method import VxFlowMethod
 from Manager.Constants.laminography_method import LaminographyMethodConstants
+from Manager.Constants.recon_method import ReconMethodConstants
 from Manager.Util.compute_geometry import VxComputeGeometry
 from Manager.Util.load_images_internal import FileLoader
 from Manager.Tool.Performance import VxTool as VxPerformanceTool
@@ -105,6 +106,44 @@ class VxManager:
             if self.Images is None:
                 raise ValueError("No projections: call LoadImages first or pass them to Run.")
             projections = self.Images
+
+        p = self.Param
+
+        if p.dst_pixel_format not in ("u8", "u16"):
+            raise ValueError("Invalid result pixel format")
+
+        # source stack: at least two projections to reconstruct from
+        if p.num_of_imgs <= 1:
+            raise ValueError("Invalid number of projections")
+
+        # destination volume: at least one slice
+        if p.dst_z < 1:
+            raise ValueError("Invalid number of volume slices")
+
+        # detector and volume must have a real footprint
+        if p.det_width < 1 or p.det_height < 1 or p.dst_x < 1 or p.dst_y < 1:
+            raise ValueError("Invalid image dimension input")
+
+        # geometry: magnification and voxel size divide by these
+        if p.sod <= 0 or p.sdd <= p.sod:
+            raise ValueError("Invalid source/detector distances")
+        if p.det_pitch <= 0:
+            raise ValueError("Invalid detector pitch")
+
+        # the stack has to match the detector and angles it is reconstructed with
+        if projections.ndim != 3:
+            raise ValueError("Projections must be a 3D (angles, height, width) stack")
+        n, h, w = projections.shape
+        if (h, w) != (p.det_height, p.det_width):
+            raise ValueError(
+                f"Projection size {w}x{h} does not match detector {p.det_width}x{p.det_height}")
+        if n != p.num_of_imgs:
+            raise ValueError(
+                f"Projection count {n} does not match {p.num_of_imgs} angles")
+
+        # iterative algorithms need a positive iteration count
+        if self.ReconMethod != ReconMethodConstants.FDK and p.iterations < 1:
+            raise ValueError("Invalid iteration count")
 
         tool = self.activeTool_Internal()
         self.Result = tool.run_internal(projections, algo=self.ReconMethod, **kwargs)

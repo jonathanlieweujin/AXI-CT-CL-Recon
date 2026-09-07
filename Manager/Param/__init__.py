@@ -22,6 +22,7 @@ class VxParam:
         dst_x: float = 0.0,
         dst_y: float = 0.0,
         dst_z: float = 0.0,
+        dst_pixel_format: str = "u8", #u8, u16
         recon_method: ReconMethodConstants = ReconMethodConstants.FDK,
         laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED,
         iterations: int = 1,
@@ -44,6 +45,7 @@ class VxParam:
         self.dst_x = dst_x
         self.dst_y = dst_y
         self.dst_z = dst_z
+        self.dst_pixel_format = dst_pixel_format
         self.iterations = iterations
         self.recon_method = recon_method
         self.laminography_method = laminography_method

@@ -30,10 +30,48 @@ _B = np.array([
 class VxGeom:
     """Builds TIGRE geometry from VxParam, mirroring ComputeAnglesStruct2."""
 
+
+    # Constructor
     def __init__(self, param: VxParam):
         self.param = param
 
-    def _rig_rotation(self, tilt_x_deg: float, angles_deg: np.ndarray) -> np.ndarray:
+    # Public
+    def get_default_angles(self) -> np.ndarray:
+        a0, a1, a2 = self.zyzAngles_Internal()
+        return np.column_stack([a0, a1, a2]).astype(np.float32)
+
+    def get_default_geometry(self) -> tigre.geometry:
+        return self.makeGeometry_Internal(planar_axis_order=False)
+
+    def get_planar_geometry_and_angles(self) -> tuple[tigre.geometry, np.ndarray]:
+        """
+        Coplanar-only. The axis permutation below assumes the source sits at a
+        constant +SOD along ASTRA's z, which holds for the coplanar geometry but
+        not the inclined one — the inclined flow uses get_default_geometry /
+        get_default_angles instead.
+        """
+        vecs = VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self.param).reshape(-1, 12)
+
+        source = self.astraToTigrePoints_Internal(vecs[:, 0:3])
+        detector = self.astraToTigrePoints_Internal(vecs[:, 3:6])
+
+        geo = self.makeGeometry_Internal(planar_axis_order=True)
+        geo.offDetector = np.zeros((self.param.num_of_imgs, 2), dtype=np.float32)
+        geo.rotDetector = np.zeros((self.param.num_of_imgs, 3), dtype=np.float32)
+        geo = ArbitrarySourceDetMoveGeo(geo, source, detector)
+        geo.offDetector[np.abs(geo.offDetector) < 1e-6] = 0.0
+        geo.rotDetector = self.flatDetectorRotation_Internal(geo.angles)
+        geo.COR = np.zeros(self.param.num_of_imgs, dtype=np.float32)
+
+        return geo, geo.angles.astype(np.float32)
+
+    def get_planar_angles(self) -> np.ndarray:
+        return self.get_planar_geometry_and_angles()[1]
+
+    def get_planar_geometry(self) -> tigre.geometry:
+        return self.get_planar_geometry_and_angles()[0]
+    # private / internal
+    def rigRotation_Internal(self, tilt_x_deg: float, angles_deg: np.ndarray) -> np.ndarray:
         """
         (N, 3, 3) rig rotation stack, identical rows to the Performance flow's
         computeDefaultInclinedLaminographyGeometry: R = Rx(-tilt_x) · Ry(tilt_y) · Rz(phi),
@@ -57,7 +95,7 @@ class VxGeom:
         R[:, 2, 2] = cos_tx * cos_ty
         return R
 
-    def _zyz_angles(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def zyzAngles_Internal(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Per-projection ZYZ Euler angles (a0, a1, a2) such that TIGRE's rig
         rotation Rz(-a2)·Ry(-a1)·Rz(-a0) equals B·R_rig exactly, for any
@@ -72,7 +110,7 @@ class VxGeom:
         tilt_x_deg = self.param.tilt_x - 180.0
         angles_deg = -np.asarray(self.param.angles)
 
-        D = _B @ self._rig_rotation(tilt_x_deg, angles_deg)   # (N, 3, 3)
+        D = _B @ self.rigRotation_Internal(tilt_x_deg, angles_deg)   # (N, 3, 3)
         b = np.arccos(np.clip(D[:, 2, 2], -1.0, 1.0))
         regular = np.sin(b) > 1e-9
         A = np.where(regular, np.arctan2(-D[:, 2, 1], D[:, 2, 0]), 0.0)
@@ -82,11 +120,7 @@ class VxGeom:
                      np.arctan2(D[:, 1, 0], D[:, 0, 0]))
         return -A, b, -C
 
-    def get_default_angles(self) -> np.ndarray:
-        a0, a1, a2 = self._zyz_angles()
-        return np.column_stack([a0, a1, a2]).astype(np.float32)
-
-    def _make_geometry(self, planar_axis_order: bool = False) -> tigre.geometry:
+    def makeGeometry_Internal(self, planar_axis_order: bool = False) -> tigre.geometry:
         p = self.param
         voxel_size = p.det_pitch * p.sod / p.sdd
         off_det_u_mm = p.offset_u * p.det_pitch
@@ -122,16 +156,13 @@ class VxGeom:
         geo.mode = 'cone'
         return geo
 
-    def get_default_geometry(self) -> tigre.geometry:
-        return self._make_geometry(planar_axis_order=False)
-
     @staticmethod
-    def _astra_to_tigre_points(points: np.ndarray) -> np.ndarray:
+    def astraToTigrePoints_Internal(points: np.ndarray) -> np.ndarray:
         # ASTRA planar axes: U=+x, V=+y, source=+z. TIGRE: source=+x, U=+y, V=+z.
         return np.column_stack([points[:, 2], points[:, 0], points[:, 1]])
 
     @staticmethod
-    def _flat_detector_rotation(angles: np.ndarray) -> np.ndarray:
+    def flatDetectorRotation_Internal(angles: np.ndarray) -> np.ndarray:
         desired_u = np.array([0.0, 1.0, 0.0])
         desired_v = np.array([0.0, 0.0, 1.0])
         rot = np.zeros((angles.shape[0], 3), dtype=np.float64)
@@ -145,33 +176,6 @@ class VxGeom:
             rot[i, 0] = np.arctan2(Wt[2, 1], Wt[2, 2])
         return rot.astype(np.float32)
 
-    def get_planar_geometry_and_angles(self) -> tuple[tigre.geometry, np.ndarray]:
-        """
-        Coplanar-only. The axis permutation below assumes the source sits at a
-        constant +SOD along ASTRA's z, which holds for the coplanar geometry but
-        not the inclined one — the inclined flow uses get_default_geometry /
-        get_default_angles instead.
-        """
-        vecs = VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self.param).reshape(-1, 12)
-
-        source = self._astra_to_tigre_points(vecs[:, 0:3])
-        detector = self._astra_to_tigre_points(vecs[:, 3:6])
-
-        geo = self._make_geometry(planar_axis_order=True)
-        geo.offDetector = np.zeros((self.param.num_of_imgs, 2), dtype=np.float32)
-        geo.rotDetector = np.zeros((self.param.num_of_imgs, 3), dtype=np.float32)
-        geo = ArbitrarySourceDetMoveGeo(geo, source, detector)
-        geo.offDetector[np.abs(geo.offDetector) < 1e-6] = 0.0
-        geo.rotDetector = self._flat_detector_rotation(geo.angles)
-        geo.COR = np.zeros(self.param.num_of_imgs, dtype=np.float32)
-
-        return geo, geo.angles.astype(np.float32)
-
-    def get_planar_angles(self) -> np.ndarray:
-        return self.get_planar_geometry_and_angles()[1]
-
-    def get_planar_geometry(self) -> tigre.geometry:
-        return self.get_planar_geometry_and_angles()[0]
 
 class VxTool:
     """Runs a TIGRE reconstruction algorithm given projections and a VxParam."""
@@ -216,6 +220,7 @@ class VxTool:
         ReconMethodConstants.OS_SART_TV: algs.ossart_tv,
     }
 
+    # Constructor
     def __init__(self, param: VxParam, laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED, left_pad: int = 0, right_pad: int = 0):
         self._param = param
         self._geom  = VxGeom(param)
@@ -224,46 +229,7 @@ class VxTool:
         self._right_pad = int(right_pad)
         self.result = None
 
-    @staticmethod
-    def _normalise_algo_name(algo: str) -> str:
-        name = algo.strip()
-        name = name.replace("\u03b2", "BETA").replace("\u0392", "BETA")
-        name = name.upper()
-        name = name.replace("?", "BETA")
-        name = name.replace("-", "_").replace(" ", "_").replace("/", "_")
-        while "__" in name:
-            name = name.replace("__", "_")
-        return name
-
-    def _extrapolate(self, projections: np.ndarray, geo: tigre.geometry) -> tuple[np.ndarray, tigre.geometry]:
-        left_pad = max(0, self._left_pad)
-        right_pad = max(0, self._right_pad)
-        if left_pad == 0 and right_pad == 0:
-            return projections, geo
-
-        # TIGRE projection stack is (angles, detector_v, detector_u).
-        projections = np.pad(
-            projections,
-            ((0, 0), (0, 0), (left_pad, right_pad)),
-            mode='edge',
-        )
-
-        geo = copy.deepcopy(geo)
-        geo.nDetector = geo.nDetector.copy()
-        geo.sDetector = geo.sDetector.copy()
-        geo.nDetector[1] = projections.shape[2]
-        geo.sDetector[1] = geo.nDetector[1] * geo.dDetector[1]
-
-        center_shift_mm = ((right_pad - left_pad) / 2.0) * geo.dDetector[1]
-        if center_shift_mm != 0.0:
-            geo.offDetector = np.array(geo.offDetector, copy=True)
-            if geo.offDetector.ndim == 1:
-                geo.offDetector[1] += center_shift_mm
-            else:
-                geo.offDetector[:, 1] += center_shift_mm
-
-        return projections, geo
-
+    # Public
     def run_internal(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
         is_planar = self._laminography_method == LaminographyMethodConstants.COPLANAR
         if is_planar:
@@ -272,9 +238,9 @@ class VxTool:
             geo = self._geom.get_default_geometry()
             angles = self._geom.get_default_angles()
 
-        projections, geo = self._extrapolate(projections, geo)
+        projections, geo = self.extrapolate_Internal(projections, geo)
 
-        name = self._normalise_algo_name(algo)
+        name = self.normaliseAlgoName_Internal(algo)
         if name == ReconMethodConstants.FDK:
             if "dowang" not in kwargs:
                 kwargs["dowang"] = to_apply_redundancy_weighting(
@@ -304,3 +270,43 @@ class VxTool:
             else:
                 self.result = np.transpose(self.result, (2, 0, 1))
         return self.result
+    # private / internal
+    def extrapolate_Internal(self, projections: np.ndarray, geo: tigre.geometry) -> tuple[np.ndarray, tigre.geometry]:
+        left_pad = max(0, self._left_pad)
+        right_pad = max(0, self._right_pad)
+        if left_pad == 0 and right_pad == 0:
+            return projections, geo
+
+        # TIGRE projection stack is (angles, detector_v, detector_u).
+        projections = np.pad(
+            projections,
+            ((0, 0), (0, 0), (left_pad, right_pad)),
+            mode='edge',
+        )
+
+        geo = copy.deepcopy(geo)
+        geo.nDetector = geo.nDetector.copy()
+        geo.sDetector = geo.sDetector.copy()
+        geo.nDetector[1] = projections.shape[2]
+        geo.sDetector[1] = geo.nDetector[1] * geo.dDetector[1]
+
+        center_shift_mm = ((right_pad - left_pad) / 2.0) * geo.dDetector[1]
+        if center_shift_mm != 0.0:
+            geo.offDetector = np.array(geo.offDetector, copy=True)
+            if geo.offDetector.ndim == 1:
+                geo.offDetector[1] += center_shift_mm
+            else:
+                geo.offDetector[:, 1] += center_shift_mm
+
+        return projections, geo
+
+    @staticmethod
+    def normaliseAlgoName_Internal(algo: str) -> str:
+        name = algo.strip()
+        name = name.replace("\u03b2", "BETA").replace("\u0392", "BETA")
+        name = name.upper()
+        name = name.replace("?", "BETA")
+        name = name.replace("-", "_").replace(" ", "_").replace("/", "_")
+        while "__" in name:
+            name = name.replace("__", "_")
+        return name
