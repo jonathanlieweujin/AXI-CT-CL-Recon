@@ -28,6 +28,7 @@ the package rather than in separate scripts.
   - [4. Verify](#4-verify)
 - [Running](#running)
 - [Synthetic data](#synthetic-data)
+  - [BGA phantom](#bga-phantom)
 - [Tests](#tests)
 - [Notes](#notes)
 
@@ -66,6 +67,7 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 | `Manager/Tool/Performance/__init__.py` | ASTRA backend (`VxTool`): same interface, ASTRA toolbox, plus `plot_geometry` for inspecting the scan vectors. |
 | `syntheticTest.py` | Entry point: sets the acquisition geometry and writes a synthetic dataset (with a commented-out projection viewer). |
 | `SyntheticDataGenerator/__init__.py` | `VxSyntheticDataGenerator`: the generator entry point. Derives the binned/unbinned parameter pair, builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. See [Synthetic data](#synthetic-data). |
+| `SyntheticDataGenerator/Structures/bga.py` | `BgaStructure`: BGA / WLCSP joint phantom at physical scale, with seeded IPC-7095 defects and a ground-truth manifest. See [BGA phantom](#bga-phantom). |
 | `tests/` | Pytest suite: flow equivalence and redundancy weighting, plus the synthetic dataset generator they run against. |
 
 ## Manager
@@ -268,8 +270,46 @@ print(generator.Describe())
 | `Describe()` | One-line summary of what was generated, for progress output. |
 
 `VxPhantomConstants` selects the shape: `SOLID` (sphere plus an off-centre rod,
-so a mirrored reconstruction cannot score as a match) or `SLAB` (a thin plate
-with in-plane structure, the laminography case).
+so a mirrored reconstruction cannot score as a match), `SLAB` (a thin plate with
+in-plane structure, the laminography case), `HBM` (a stacked-die cross-section:
+μbumps, C4 bumps, DRAM layers), or `BGA` / `WLCSP` (see below).
+
+### BGA phantom
+
+`BgaStructure` (`SyntheticDataGenerator/Structures/bga.py`) is the inspection
+case rather than a geometry check: a die on solder balls over a board, built at
+physical scale with the defect population an X-ray or CL inspection is looking
+for. `BGA` is the die-on-substrate build (450 μm ball on a 900 μm pitch, BT
+substrate with 90 μm laser microvias); `WLCSP` is the wafer-level build, balls
+grown straight onto the die through a Cu UBM at 300 μm on a 500 μm pitch.
+
+Voxel values are linear attenuation coefficients in mm⁻¹ at 60 keV (NIST
+μ/ρ × density), so the forward projection through a volume gridded in mm is a
+physical line integral rather than an arbitrary label map:
+
+| Material | μ (mm⁻¹) |
+| --- | --- |
+| SAC305 solder (96.5Sn/3.0Ag/0.5Cu) | 4.790 |
+| copper (pad, plane, microvia) | 1.427 |
+| silicon (die) | 0.075 |
+| BT resin (substrate) | 0.060 |
+| FR4 (board) | 0.055 |
+| solder mask / epoxy | 0.042 |
+
+Solder is ~64× silicon and ~3.4× copper, which is why the ball reads as opaque
+and the void is the only thing visible through it.
+
+Defects are seeded per ball from a fixed RNG seed and sized against IPC-7095,
+which calls a ball a defect when the summed void area in projection passes 25 %
+(Class 2; Class 3 practice is nearer 10 %). A single void of diameter `d` in a
+ball of diameter `D` projects `(d/D)²`, so the void diameter follows from the
+target percentage directly: `void`, `gross_void`, `void_cluster`,
+`head_in_pillow`, `open`, `bridge`, `misaligned`, `missing`.
+
+`Save` writes `ground_truth.json` alongside `phantom.npy`, listing every ball,
+its defect and its summed projected void percentage, so a detector can be scored
+against what was seeded instead of eyeballed. Use `BgaStructure.Build` directly
+to override `mode`, `seed` or `defect_rate`.
 
 Storing at full detector resolution and binning on load is what a real
 acquisition does, so `binning` is applied to the reconstruction geometry only.

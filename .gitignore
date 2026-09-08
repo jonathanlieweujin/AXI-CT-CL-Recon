@@ -62,3 +62,4 @@ logs/
 *.local
 local_config.py
 reconTest2.py
+syntheticTest2.py

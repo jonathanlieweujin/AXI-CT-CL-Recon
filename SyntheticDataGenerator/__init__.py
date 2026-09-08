@@ -1,3 +1,4 @@
+import json
 import os
 from enum import Enum
 
@@ -15,6 +16,8 @@ class VxPhantomConstants(str, Enum):
     SOLID = "SOLID"
     SLAB  = "SLAB"
     HBM   = "HBM"    # HBM high-mag board cross-section (μbumps / C4 / BGA)
+    BGA   = "BGA"    # die-on-substrate BGA joints with IPC-7095 void defects
+    WLCSP = "WLCSP"  # wafer-level CSP: balls straight onto the die, no substrate
 
     def __str__(self) -> str:
         return self.value
@@ -43,6 +46,7 @@ class VxSyntheticDataGenerator:
         self.Param = None
         self.AcquisitionParam = None
         self.Volume = None
+        self.Manifest = None
         # kept in ASTRA order (det_v, n_angles, det_u): the stack is far too
         # large at full detector resolution to also hold a transposed copy.
         self.Sinogram = None
@@ -113,7 +117,8 @@ class VxSyntheticDataGenerator:
 
     def Save(self, root: str) -> str:
         """
-        Write Corrected/, Config/geometry.config and phantom.npy under root.
+        Write Corrected/, Config/geometry.config and phantom.npy under root,
+        plus ground_truth.json when the phantom seeded defects.
         Projects first if Run has not been called.
         """
         self.requireParams_Internal()
@@ -135,6 +140,12 @@ class VxSyntheticDataGenerator:
             f.write(self.buildConfig_Internal())
 
         np.save(os.path.join(root, "phantom.npy"), self.Volume)
+
+        # phantoms that carry seeded defects also write what they seeded, so a
+        # detector can be scored against ground truth rather than eyeballed
+        if self.Manifest is not None:
+            with open(os.path.join(root, "ground_truth.json"), "w", encoding="utf-8") as f:
+                json.dump(self.Manifest, f, indent=2)
         return root
 
     def Generate(self, root: str) -> str:
@@ -179,6 +190,11 @@ class VxSyntheticDataGenerator:
         shape = (vol_z, vol_y, vol_x)
         vs = self.VoxelSize
 
+        if self.PhantomKind in (VxPhantomConstants.BGA, VxPhantomConstants.WLCSP):
+            from SyntheticDataGenerator.Structures.bga import BgaStructure
+            mode = "FCBGA" if self.PhantomKind == VxPhantomConstants.BGA else "WLCSP"
+            vol, self.Manifest = BgaStructure.Build(shape, vs, mode=mode)
+            return vol
         if self.PhantomKind == VxPhantomConstants.HBM:
             from SyntheticDataGenerator.Structures.hbm import HBMStructure
             return HBMStructure.GetStructure(shape, vs)

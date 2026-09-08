@@ -6,14 +6,15 @@ from SyntheticDataGenerator import VxSyntheticDataGenerator, VxPhantomConstants
 from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
-DST = r"path"
+LaminographyMethod = LaminographyMethodConstants.INCLINED
+DST = rf"path\{LaminographyMethod}"
 DetU = 1200
 DetV = 1401
 DetZ = 721
 
 DetPitch = 0.084 * 2
 Binning = 1
-LaminographyMethod = LaminographyMethodConstants.INCLINED
+
 Phantom = VxPhantomConstants.HBM
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 
