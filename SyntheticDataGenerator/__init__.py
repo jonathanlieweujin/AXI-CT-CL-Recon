@@ -539,7 +539,9 @@ class VxSyntheticDataGenerator:
     def getVectors_Internal(self) -> np.ndarray:
         # Built from the acquisition geometry: the U/V vectors carry the
         # detector pitch the projections are stored at.
-        return VxManager(self.AcquisitionParam).GetScanGeometry()
+        manager = VxManager()
+        manager.SetParam(self.AcquisitionParam)
+        return manager.GetScanGeometry()
 
     def project_Internal(self, phantom: np.ndarray) -> np.ndarray:
         """Forward project. Returns the sinogram in ASTRA (det_v, angles, det_u) order."""

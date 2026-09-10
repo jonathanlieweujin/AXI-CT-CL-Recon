@@ -12,14 +12,23 @@ class VxTool:
     """Runs an ASTRA reconstruction algorithm given projections and a VxParam."""
 
     # Constructor
-    def __init__(self, param: VxParam, laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED, left_pad: int = 0, right_pad: int = 0):
-        self._param = param
-        self._laminography_method = laminography_method
-        self._left_pad = int(left_pad)
-        self._right_pad = int(right_pad)
+    def __init__(self):
+        self._param = None
+        self._left_pad = 0
+        self._right_pad = 0
         self.result = None
 
     # Public
+    def SetParam(self, param: VxParam):
+        """Set the geometry. Everything else is read from it at use time."""
+        self._param = param
+
+    def SetLeftPad(self, left_pad: int):
+        self._left_pad = int(left_pad)
+
+    def SetRightPad(self, right_pad: int):
+        self._right_pad = int(right_pad)
+
     def run_internal(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK,
             min_constraint: float | None = None, max_constraint: float | None = None) -> np.ndarray:
         match algo.upper():
@@ -156,7 +165,7 @@ class VxTool:
 
     # private / internal
     def getVectors_Internal(self) -> np.ndarray:
-        if self._laminography_method == LaminographyMethodConstants.COPLANAR:
+        if self._param.laminography_method == LaminographyMethodConstants.COPLANAR:
             return VxComputeGeometry.computeCoplanarTranslationalLaminographyGeometry(self._param).reshape(-1, 12)
         return VxComputeGeometry.computeDefaultInclinedLaminographyGeometry(self._param).reshape(-1, 12)
 
@@ -289,7 +298,7 @@ class VxTool:
         projections = self.generate_sinogram(projections)
         projections = self.extrapolate_Internal(projections)
 
-        if to_apply_redundancy_weighting(p.offset_u, p.tilt_x, self._laminography_method):
+        if to_apply_redundancy_weighting(p.offset_u, p.tilt_x, p.laminography_method):
             projections = self.applyRedundancyWeight_Internal(projections,
                                        p.offset_u,
                                        p.det_pitch,

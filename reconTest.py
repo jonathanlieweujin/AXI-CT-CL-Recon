@@ -75,10 +75,11 @@ param = VxParam(
 )
 
 # --- Reconstruct ---
-manager = VxManager(param,
-                    flow_method=Mode,
-                    left_pad=LEFT_PAD,
-                    right_pad=RIGHT_PAD)
+manager = VxManager()
+manager.SetParam(param)
+manager.SetFlowMethod(Mode)
+manager.SetLeftPad(LEFT_PAD)
+manager.SetRightPad(RIGHT_PAD)
 
 images = manager.LoadImages(SRC, interval=Interval)
 print(f"Loaded: {images.shape}")

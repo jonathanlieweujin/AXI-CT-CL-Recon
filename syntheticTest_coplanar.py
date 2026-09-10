@@ -8,24 +8,24 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 # --- Parameters ---
 Phantom = VxPhantomConstants.PCB_PANEL
 DST = rf"output\Synthetic\{Phantom}"
-DetU = 500
-DetV = 500
+DetU = 768
+DetV = 768
 DetZ = 721
 
-DetPitch = 0.3
+DetPitch = 0.085 * 2
 Binning = 1
 LaminographyMethod = LaminographyMethodConstants.COPLANAR
 
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 
-VolX = 500
-VolY = 500
-VolZ = 100
+VolX = 768
+VolY = 768
+VolZ = 250
 
 SOD = 17
 SDD = 476
 
-DetTiltX = 51
+DetTiltX = 30
 DetTiltY = 0
 
 DetOffsetU = 0

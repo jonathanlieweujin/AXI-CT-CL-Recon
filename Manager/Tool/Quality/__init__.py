@@ -221,17 +221,27 @@ class VxTool:
     }
 
     # Constructor
-    def __init__(self, param: VxParam, laminography_method: LaminographyMethodConstants = LaminographyMethodConstants.INCLINED, left_pad: int = 0, right_pad: int = 0):
-        self._param = param
-        self._geom  = VxGeom(param)
-        self._laminography_method = laminography_method
-        self._left_pad = int(left_pad)
-        self._right_pad = int(right_pad)
+    def __init__(self):
+        self._param = None
+        self._geom = None
+        self._left_pad = 0
+        self._right_pad = 0
         self.result = None
 
     # Public
+    def SetParam(self, param: VxParam):
+        """Set the geometry. Everything else is read from it at use time."""
+        self._param = param
+        self._geom = VxGeom(param)
+
+    def SetLeftPad(self, left_pad: int):
+        self._left_pad = int(left_pad)
+
+    def SetRightPad(self, right_pad: int):
+        self._right_pad = int(right_pad)
+
     def run_internal(self, projections: np.ndarray, algo: str = ReconMethodConstants.FDK, **kwargs) -> np.ndarray:
-        is_planar = self._laminography_method == LaminographyMethodConstants.COPLANAR
+        is_planar = self._param.laminography_method == LaminographyMethodConstants.COPLANAR
         if is_planar:
             geo, angles = self._geom.get_planar_geometry_and_angles()
         else:
@@ -244,7 +254,7 @@ class VxTool:
         if name == ReconMethodConstants.FDK:
             if "dowang" not in kwargs:
                 kwargs["dowang"] = to_apply_redundancy_weighting(
-                    self._param.offset_u, self._param.tilt_x, self._laminography_method)
+                    self._param.offset_u, self._param.tilt_x, self._param.laminography_method)
             self.result = algs.fdk(
                 projections,
                 geo,
