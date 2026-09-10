@@ -28,7 +28,9 @@ the package rather than in separate scripts.
   - [4. Verify](#4-verify)
 - [Running](#running)
 - [Synthetic data](#synthetic-data)
+  - [Phantom sizing](#phantom-sizing)
   - [BGA phantom](#bga-phantom)
+  - [PCB panel phantom](#pcb-panel-phantom)
 - [Tests](#tests)
 - [Notes](#notes)
 
@@ -68,6 +70,8 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 | `syntheticTest.py` | Entry point: sets the acquisition geometry and writes a synthetic dataset (with a commented-out projection viewer). |
 | `SyntheticDataGenerator/__init__.py` | `VxSyntheticDataGenerator`: the generator entry point. Derives the binned/unbinned parameter pair, builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. See [Synthetic data](#synthetic-data). |
 | `SyntheticDataGenerator/Structures/bga.py` | `BgaStructure`: BGA / WLCSP joint phantom at physical scale, with seeded IPC-7095 defects and a ground-truth manifest. See [BGA phantom](#bga-phantom). |
+| `SyntheticDataGenerator/Structures/pcb_panel.py` | `PcbPanelStructure`: PCB panel phantom measured off the FID_2 reference acquisition. See [PCB panel phantom](#pcb-panel-phantom). |
+| `SyntheticDataGenerator/Structures/materials.py` | Linear attenuation coefficients (mm⁻¹, 60 keV) shared by the phantoms. |
 | `tests/` | Pytest suite: flow equivalence and redundancy weighting, plus the synthetic dataset generator they run against. |
 
 ## Manager
@@ -262,12 +266,59 @@ print(generator.Describe())
 
 | Method | What it does |
 | --- | --- |
-| `SetParams(...)` | Derives the two geometries a dataset needs from one unbinned detector description: the reconstruction geometry (binned, and the volume grid the phantom lives on) and the acquisition geometry (unbinned, the detector the projections are stored at). Returns the reconstruction param. |
+| `SetParams(...)` | Derives the geometries a dataset needs from one unbinned detector description: the reconstruction geometry (binned) and the acquisition geometry (unbinned, the detector the projections are stored at). `volume` is the *reconstruction* volume only: it does not size the phantom. Returns the reconstruction param. |
+| `PhantomSizeMm` / `PhantomVolume` | The box the phantom is built in, mm and voxels. Thickness comes from the phantom class, lateral extent is solved from the geometry so the object covers the detector at every angle. See [Phantom sizing](#phantom-sizing). |
+| `MinimumPhantomVolume()` | Smallest box that keeps the phantom's own edge out of every projection, or `None` when no size achieves it. |
 | `Run()` | Builds the phantom and forward-projects it. Leaves the phantom on `Volume` and the projections on `Sinogram`, in ASTRA `(det_v, angles, det_u)` order. |
 | `Save(root)` | Writes `Corrected/`, `Config/geometry.config` and `phantom.npy` under `root`. Projects first if `Run` has not been called. |
 | `Generate(root)` | `Run` then `Save`, in one call. |
 | `VoxelSize` / `NumProjections` | Derived geometry values. |
 | `Describe()` | One-line summary of what was generated, for progress output. |
+
+### Phantom sizing
+
+The reconstruction volume and the object are different things, and the
+generator keeps them apart. A real board extends well past the reconstructed
+field of view; a phantom that stops at it puts its own box wall into the
+projections, which shows up as a straight edge sweeping across the frame and
+then as an artefact in the reconstruction.
+
+So `volume=(VolX, VolY, VolZ)` is written to the config and used to crop the
+saved phantom, but it does not size the object. The phantom box is derived:
+
+- **thickness** from the phantom class (`STACK_THICKNESS_MM` / `DEFAULT_SIZE_MM`)
+  — it is a property of the part, not of the scan.
+- **lateral extent** solved by bisection on the scan vectors: the smallest box
+  whose silhouette covers the whole detector at every angle.
+
+Every geometry input moves that solve. At the FID_2 geometry with `PCB_PANEL`:
+
+| Geometry | phantom |
+| --- | --- |
+| tilt 30, INCLINED | 7.02 mm |
+| tilt 51, INCLINED | 9.03 mm |
+| COPLANAR | 4.61 mm — exactly `DetU` |
+| `DetU/DetV` 1024 | 4.42 mm |
+| `DetOffsetU` 200 px | 7.94 mm |
+
+COPLANAR needs no margin at all because the detector stays parallel to the FOV,
+so the silhouette never rotates. Inclined costs 1.5–2× on top of that.
+
+Two cases the solve cannot serve, both of which warn rather than fail silently:
+an upright detector (CT geometry, `tilt_x = 90`) where a flat object turns
+edge-on and no finite board fills the frame; and a box too large for
+`max_phantom_voxels`, which is clamped. `phantom_size_mm=(w, l, t)` overrides
+the solve outright when truncation is what you want.
+
+The phantom is built at the **acquisition** (unbinned) voxel, not the binned
+reconstruction voxel, so binning does not throw away detail before the
+projection ever happens. `phantom.npy` is saved cropped to the reconstruction
+volume — block-averaged back down when binning applies — so it still compares
+directly against a reconstruction.
+
+`SOLID` and `SLAB` are exempt: their features are fractions of the voxel array
+rather than physical sizes, so they have no size to solve for and are still
+built on the reconstruction grid.
 
 `VxPhantomConstants` selects the shape: `SOLID` (sphere plus an off-centre rod,
 so a mirrored reconstruction cannot score as a match), `SLAB` (a thin plate with
@@ -310,6 +361,34 @@ target percentage directly: `void`, `gross_void`, `void_cluster`,
 its defect and its summed projected void percentage, so a detector can be scored
 against what was seeded instead of eyeballed. Use `BgaStructure.Build` directly
 to override `mode`, `seed` or `defect_rate`.
+
+### PCB panel phantom
+
+`PcbPanelStructure` (`SyntheticDataGenerator/Structures/pcb_panel.py`), selected
+with `VxPhantomConstants.PCB_PANEL`, reproduces the FID_2 reference acquisition
+(1536 × 1536 × 300 at 3.0 μm = 4.608 × 4.608 × 0.900 mm). Every in-plane
+dimension was measured off that reconstruction, not taken from a datasheet:
+
+| Feature | Measured |
+| --- | --- |
+| bump pitch | 200 μm |
+| bump diameter | 83 μm (p10 80, p90 86, over 103 objects) |
+| main site | 7 × 8 bumps, x 1710–2910, y 1610–3010 μm |
+| second site | 7 × 3 bumps, x 1710–2910, y 4104–4504 μm |
+| plated through hole | 110 μm drill, 165 μm outer → 27 μm barrel wall |
+| via layout | 28 measured centres, mostly perimeter |
+
+The z stack is *not* measured. A 30° laminography reconstruction smears depth
+badly — a 60 μm bump reads as a ~190 μm streak in the reference — so copying
+its z profile would bake the point-spread into the phantom. Ordinary board
+values are used instead, summing to the ~570 μm of metal the reference does
+show: 25 μm mask / 30 μm Cu / 400 μm FR4 / 30 μm Cu / 25 μm mask / 60 μm bump.
+
+Feature coordinates are held in μm relative to the volume centre, so the panel
+renders at any voxel size or volume shape and clips at the box — only the crop
+changes, never the part. Defects are off by default (`defect_rate=0.0`) so the
+panel is a faithful copy; raise it to seed `void` / `gross_void` / `missing` /
+`misaligned` with a ground-truth manifest, as `BgaStructure` does.
 
 Storing at full detector resolution and binning on load is what a real
 acquisition does, so `binning` is applied to the reconstruction geometry only.

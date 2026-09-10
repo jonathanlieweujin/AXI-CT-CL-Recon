@@ -3,8 +3,19 @@ import numpy as np
 
 class HBMStructure:
     """
+    HBM phantom sample size
+    (2.000 x 2.000 x 1.000 mm).
+
     Representative HBM (High Bandwidth Memory) package cross-section phantom
     for computed laminography validation at high magnification.
+
+    The z figure is intrinsic: the 0.760 mm stack centred in a 1.000 mm box.
+    The lateral figure is a recommended default, not a fixed extent - every
+    layer spans the full box and the bump lattices tile by modular arithmetic,
+    so the phantom fills whatever volume it is given. 2.000 mm is the smallest
+    box that shows all three bump generations, since the BGA block only renders
+    when its 900 um pitch fits inside 0.9 x FOV (i.e. FOV > 1.00 mm).
+    DEFAULT_SIZE_MM and STACK_THICKNESS_MM carry both numbers.
 
     Three bump generations at physical scale (midpoint of spec ranges):
 
@@ -25,6 +36,10 @@ class HBMStructure:
       1.2  solder (SnAg μbumps and C4 bumps)
       1.8  copper (BGA balls — thicker shell, higher Z)
     """
+
+    # box the phantom is designed for, and the material thickness inside it
+    DEFAULT_SIZE_MM    = (2.000, 2.000, 1.000)   # lateral is a default: it tiles
+    STACK_THICKNESS_MM = 0.760
 
     _UBUMP_DIA_UM  = 12.5
     _UBUMP_PITCH_UM = 27.5

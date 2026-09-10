@@ -1,8 +1,23 @@
 import numpy as np
 
+from SyntheticDataGenerator.Structures.materials import (
+    MU_BT, MU_CU, MU_FR4, MU_MASK, MU_SI, MU_SOLDER,
+)
+
 
 class BgaStructure:
     """
+    BGA phantom sample size
+    (4.500 x 4.500 x 1.500 mm), WLCSP (2.500 x 2.500 x 1.100 mm).
+
+    The z figures are intrinsic: a 1.240 mm stack for FCBGA and 0.825 mm for
+    WLCSP, each centred in its box with air either side. The lateral figures
+    are recommended defaults, not fixed extents - every layer spans the full
+    box and the ball lattice tiles by modular arithmetic, so the phantom fills
+    whatever volume it is given. Each default holds a 5 x 5 array at that
+    mode's pitch (900 um / 500 um). DEFAULT_SIZE_MM and STACK_THICKNESS_MM
+    carry both numbers, keyed by mode.
+
     Ball-grid-array cross-section phantom: a silicon die carried on solder
     balls over a board, with the void / open / bridge defect population an
     X-ray or CL inspection is actually looking for.
@@ -66,6 +81,13 @@ class BgaStructure:
     ground truth instead of eyeballed.
     """
 
+    # box each mode is designed for, and the material thickness inside it
+    DEFAULT_SIZE_MM = {                          # lateral is a default: it tiles
+        "FCBGA": (4.500, 4.500, 1.500),
+        "WLCSP": (2.500, 2.500, 1.100),
+    }
+    STACK_THICKNESS_MM = {"FCBGA": 1.240, "WLCSP": 0.825}
+
     # geometry, micrometres
     _FCBGA = dict(
         ball_dia=450.0, pitch=900.0, standoff=350.0,
@@ -83,13 +105,13 @@ class BgaStructure:
     _CAPTURE_DIA_UM  = 150.0
     _PLANE_T_UM      = 15.0
 
-    # linear attenuation coefficient, mm^-1 @ 60 keV
-    _MU_FR4    = 0.055
-    _MU_MASK   = 0.042
-    _MU_BT     = 0.060
-    _MU_SI     = 0.075
-    _MU_CU     = 1.427
-    _MU_SOLDER = 4.790
+    # linear attenuation coefficient, mm^-1 @ 60 keV - see materials.py
+    _MU_FR4    = MU_FR4
+    _MU_MASK   = MU_MASK
+    _MU_BT     = MU_BT
+    _MU_SI     = MU_SI
+    _MU_CU     = MU_CU
+    _MU_SOLDER = MU_SOLDER
 
     _DEFECTS = ("void", "gross_void", "void_cluster", "head_in_pillow",
                 "open", "bridge", "misaligned", "missing")
