@@ -7,7 +7,7 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
 LaminographyMethod = LaminographyMethodConstants.INCLINED
-DST = rf"ouput\Model"
+DST = rf"output\Model"
 
 Model = r"tests\model\Greymon3D.obj"
 # STL and OBJ carry no units. This model measures 3.494 x 3.500 x 5.033 in its
