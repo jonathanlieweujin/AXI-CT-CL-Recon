@@ -1,15 +1,25 @@
 import itertools
 import json
 import os
+import re
 import warnings
 from enum import Enum
 
+import astra
 import cv2
 import numpy as np
+from scipy.spatial import ConvexHull
 
 from Manager import VxManager
 from Manager.Param import VxParam
 from Manager.Constants.laminography_method import LaminographyMethodConstants
+from SyntheticDataGenerator.Structures.bga import BgaStructure
+from SyntheticDataGenerator.Structures.hbm import HBMStructure
+from SyntheticDataGenerator.Structures.materials import MU_CU
+from SyntheticDataGenerator.Structures.mesh import MeshStructure
+from SyntheticDataGenerator.Structures.pcb_panel import PcbPanelStructure
+from SyntheticDataGenerator.Structures.slab import SlabStructure
+from SyntheticDataGenerator.Structures.solid import SolidStructure
 
 
 class VxPhantomConstants(str, Enum):
@@ -40,10 +50,12 @@ class VxSyntheticDataGenerator:
     assembling VxParam objects or knowing the step order.
     """
 
-    # ~12 GB of float32 before ASTRA allocates the sinogram; past this the
-    # phantom is clamped and a warning is raised rather than the box silently
-    # growing until the machine swaps.
-    _MAX_PHANTOM_VOXELS = 3_000_000_000
+    # The phantom and the sinogram must both be resident on the GPU during
+    # create_sino3d_gpu, so the budget is the card's memory less the sinogram.
+    # ASTRA needs working buffers of its own on top, hence the fraction.
+    _GPU_MEMORY_FRACTION = 0.80
+    # Used only when the GPU cannot be queried: ~2 GB, deliberately timid.
+    _MAX_PHANTOM_VOXELS_FALLBACK = 500_000_000
 
     # Constructor
     def __init__(
@@ -55,7 +67,7 @@ class VxSyntheticDataGenerator:
         self.AcquisitionParam = None
         self.PhantomParam = None
         self.PhantomSizeOverrideMm = None
-        self.MaxPhantomVoxels = self._MAX_PHANTOM_VOXELS
+        self.MaxPhantomVoxelsOverride = None
         self.Volume = None
         self.Manifest = None
         # kept in ASTRA order (det_v, n_angles, det_u): the stack is far too
@@ -127,20 +139,53 @@ class VxSyntheticDataGenerator:
         self.PhantomParam = None
         self.PhantomSizeOverrideMm = phantom_size_mm
         if max_phantom_voxels is not None:
-            self.MaxPhantomVoxels = int(max_phantom_voxels)
+            self.MaxPhantomVoxelsOverride = int(max_phantom_voxels)
         self.Volume = None
         self.Sinogram = None
         return self.Param
 
-    def Run(self) -> np.ndarray:
+    def Run(self, model3DPath: str = None, model_scale: float = 1.0,
+            model_mu: float = None) -> np.ndarray:
         """
         Build the phantom and forward project it.
 
         The phantom is left on Volume and the projections on Sinogram, in ASTRA
         (det_v, angles, det_u) order.
+
+        With no model3DPath the phantom comes from PhantomKind as usual. Given
+        one, a .stl or .obj file is voxelised instead and PhantomKind is
+        ignored. The model is centred on the origin and the phantom box is its
+        bounding box plus a margin: a mesh is a finite object, so its edge in
+        the projections is real and the coverage solve does not apply.
+
+        Args:
+            model3DPath: .stl or .obj file. VTK has no FBX importer, so convert
+                         to OBJ or glTF first if that is what you have.
+            model_scale: model units -> mm. STL and OBJ carry no units, so this
+                         is the caller's to get right.
+            model_mu:    linear attenuation coefficient for the part, mm^-1.
+                         Defaults to copper; see Structures/materials.py.
         """
         self.requireParams_Internal()
-        self.Volume = self.buildPhantom_Internal()
+
+        if model3DPath is None:
+            self.Volume = self.buildPhantom_Internal()
+            self.Sinogram = self.project_Internal(self.Volume)
+            return self.Sinogram
+
+        # Load once: the bounding box sizes the box, then the same polydata is
+        # voxelised, rather than reading the file twice.
+        poly = MeshStructure.Load(model3DPath, scale=model_scale, centre=True)
+
+        voxel = self.PhantomVoxelSize
+        margin = 4.0 * voxel                      # keep the surface off the wall
+        self.PhantomSizeOverrideMm = tuple(
+            max(b + 2.0 * margin, 4.0 * voxel)
+            for b in MeshStructure.BoundsMm(poly))
+
+        self.Volume, self.Manifest = MeshStructure.Build(
+            self.PhantomVolume, voxel, path=model3DPath, scale=model_scale,
+            mu=MU_CU if model_mu is None else model_mu, poly=poly)
         self.Sinogram = self.project_Internal(self.Volume)
         return self.Sinogram
 
@@ -191,6 +236,53 @@ class VxSyntheticDataGenerator:
         p = self.requireParams_Internal()
         return p.det_pitch * p.sod / p.sdd
 
+    @staticmethod
+    def GpuMemoryMb() -> int:
+        """
+        Memory of the largest CUDA device ASTRA can see, MB, or None when
+        there is no usable GPU. Asked of ASTRA rather than of nvidia-smi or
+        pynvml, because ASTRA is what does the allocating - and it needs no
+        extra dependency. get_gpu_info returns a human string per index and
+        reports "Invalid device" past the last one, so indices are probed
+        until one fails to parse.
+        """
+        try:
+            if not astra.use_cuda():
+                return None
+        except Exception:
+            return None
+        best = None
+        for i in range(16):
+            try:
+                found = re.search(r"with\s+(\d+)\s*MB", str(astra.get_gpu_info(i)))
+            except Exception:
+                break
+            if not found:
+                break
+            mb = int(found.group(1))
+            best = mb if best is None else max(best, mb)
+        return best
+
+    @property
+    def MaxPhantomVoxels(self) -> int:
+        """
+        Phantom voxels that will fit alongside the sinogram on the GPU.
+
+        Derived from the card unless max_phantom_voxels was passed to
+        SetParams. The sinogram is subtracted because create_sino3d_gpu holds
+        both at once, so a large detector shrinks the volume that fits.
+        """
+        if self.MaxPhantomVoxelsOverride is not None:
+            return int(self.MaxPhantomVoxelsOverride)
+        mb = self.GpuMemoryMb()
+        if mb is None:
+            return self._MAX_PHANTOM_VOXELS_FALLBACK
+        budget = mb * 1024 * 1024 * self._GPU_MEMORY_FRACTION
+        acq = self.AcquisitionParam
+        sino = 0 if acq is None else (
+            int(acq.det_width) * int(acq.det_height) * self.NumProjections * 4)
+        return max(1, int((budget - sino) / 4))
+
     @property
     def PhantomVoxelSize(self) -> float:
         """
@@ -223,11 +315,19 @@ class VxSyntheticDataGenerator:
             default = default[self.phantomMode_Internal()]
 
         if self.PhantomSizeOverrideMm is not None:
-            return tuple(float(v) for v in self.PhantomSizeOverrideMm)
+            over = tuple(float(v) for v in self.PhantomSizeOverrideMm)
+            v = self.PhantomVoxelSize
+            self.checkBudget_Internal((over[0] / v) * (over[1] / v) * (over[2] / v))
+            return over
 
         p = self.Param
         if default is None:
+            # SOLID / SLAB: no physical size of their own, so the
+            # reconstruction volume is the only size available. Still checked
+            # against the budget - an oversized volume here fails deep inside
+            # ASTRA with an unreadable NULL-pointer error.
             v = self.VoxelSize
+            self.checkBudget_Internal(p.dst_x * p.dst_y * p.dst_z)
             return (p.dst_x * v, p.dst_y * v, p.dst_z * v)
 
         thickness = float(default[2])
@@ -246,9 +346,12 @@ class VxSyntheticDataGenerator:
             capped = (self.MaxPhantomVoxels * voxel ** 3 / thickness) ** 0.5
             warnings.warn(
                 f"Phantom needs {lateral:.2f} mm laterally to cover the "
-                f"detector ({count:,.0f} voxels) but max_phantom_voxels allows "
-                f"{self.MaxPhantomVoxels:,}; clamping to {capped:.2f} mm. The "
-                f"object edge will appear in the projections.", stacklevel=2)
+                f"detector ({count:,.0f} voxels, {count * 4 / 1e9:.1f} GB) but "
+                f"only {self.MaxPhantomVoxels:,} fit alongside the sinogram on "
+                f"a {self.GpuMemoryMb() or '?'} MB GPU; clamping to "
+                f"{capped:.2f} mm. The object edge will appear in the "
+                f"projections - reduce the detector, or pass "
+                f"max_phantom_voxels to override the estimate.", stacklevel=2)
             lateral = capped
         return (lateral, lateral, thickness)
 
@@ -331,6 +434,29 @@ class VxSyntheticDataGenerator:
                    .mean(axis=(1, 3, 5)))
         return np.ascontiguousarray(cut, dtype=np.float32)
 
+    def checkBudget_Internal(self, voxels: float) -> None:
+        """
+        Warn before a phantom that cannot be projected is built.
+
+        create_sino3d_gpu needs the phantom AND the sinogram resident on the
+        GPU at once; when the allocation fails ASTRA surfaces it as
+        "Cannot create cython.array from NULL pointer", which says nothing
+        about size, so the numbers are reported here instead.
+        """
+        if voxels <= self.MaxPhantomVoxels:
+            return
+        acq = self.AcquisitionParam
+        sino = int(acq.det_width) * int(acq.det_height) * self.NumProjections
+        warnings.warn(
+            f"Phantom is {voxels:,.0f} voxels ({voxels * 4 / 1e9:.1f} GB "
+            f"float32) plus a {sino * 4 / 1e9:.1f} GB sinogram = "
+            f"{(voxels + sino) * 4 / 1e9:.1f} GB, which must all fit on the "
+            f"GPU at once; max_phantom_voxels allows "
+            f"{self.MaxPhantomVoxels:,} on a {self.GpuMemoryMb() or '?'} MB "
+            f"GPU. Reduce the volume (or the detector), or pass "
+            f"max_phantom_voxels to override the estimate.",
+            stacklevel=3)
+
     def phantomMode_Internal(self) -> str:
         return "WLCSP" if self.PhantomKind == VxPhantomConstants.WLCSP else "FCBGA"
 
@@ -339,14 +465,11 @@ class VxSyntheticDataGenerator:
         phantoms (SOLID / SLAB) that have no physical size of their own."""
         k = self.PhantomKind
         if k == VxPhantomConstants.PCB_PANEL:
-            from SyntheticDataGenerator.Structures.pcb_panel import PcbPanelStructure
-            return PcbPanelStructure
+                return PcbPanelStructure
         if k in (VxPhantomConstants.BGA, VxPhantomConstants.WLCSP):
-            from SyntheticDataGenerator.Structures.bga import BgaStructure
-            return BgaStructure
+                return BgaStructure
         if k == VxPhantomConstants.HBM:
-            from SyntheticDataGenerator.Structures.hbm import HBMStructure
-            return HBMStructure
+                return HBMStructure
         return None
 
     def solveCoverage_Internal(self, thickness_mm: float):
@@ -358,8 +481,6 @@ class VxSyntheticDataGenerator:
         object turns edge-on and its projection collapses to a line, so no
         finite board ever fills the frame.
         """
-        from scipy.spatial import ConvexHull
-
         acq = self.AcquisitionParam
         vecs = np.asarray(self.getVectors_Internal(), dtype=np.float64).reshape(-1, 12)
         hu, hv = acq.det_width / 2.0, acq.det_height / 2.0
@@ -403,21 +524,16 @@ class VxSyntheticDataGenerator:
         vs = self.PhantomVoxelSize
 
         if self.PhantomKind == VxPhantomConstants.PCB_PANEL:
-            from SyntheticDataGenerator.Structures.pcb_panel import PcbPanelStructure
             vol, self.Manifest = PcbPanelStructure.Build(shape, vs)
             return vol
         if self.PhantomKind in (VxPhantomConstants.BGA, VxPhantomConstants.WLCSP):
-            from SyntheticDataGenerator.Structures.bga import BgaStructure
             mode = "FCBGA" if self.PhantomKind == VxPhantomConstants.BGA else "WLCSP"
             vol, self.Manifest = BgaStructure.Build(shape, vs, mode=mode)
             return vol
         if self.PhantomKind == VxPhantomConstants.HBM:
-            from SyntheticDataGenerator.Structures.hbm import HBMStructure
             return HBMStructure.GetStructure(shape, vs)
         if self.PhantomKind == VxPhantomConstants.SOLID:
-            from SyntheticDataGenerator.Structures.solid import SolidStructure
             return SolidStructure.GetStructure(shape, vs)
-        from SyntheticDataGenerator.Structures.slab import SlabStructure
         return SlabStructure.GetStructure(shape, vs)
 
     def getVectors_Internal(self) -> np.ndarray:
@@ -427,8 +543,6 @@ class VxSyntheticDataGenerator:
 
     def project_Internal(self, phantom: np.ndarray) -> np.ndarray:
         """Forward project. Returns the sinogram in ASTRA (det_v, angles, det_u) order."""
-        import astra
-
         acq = self.AcquisitionParam
 
         # The phantom box is centred on the origin, not on volume_mid: the
@@ -446,7 +560,20 @@ class VxSyntheticDataGenerator:
         proj_geom = astra.create_proj_geom(
             'cone_vec', int(acq.det_height), int(acq.det_width), self.getVectors_Internal())
 
-        proj_id, proj = astra.create_sino3d_gpu(phantom, proj_geom, vol_geom)
+        try:
+            proj_id, proj = astra.create_sino3d_gpu(phantom, proj_geom, vol_geom)
+        except Exception as exc:
+            sino = int(acq.det_width) * int(acq.det_height) * self.NumProjections
+            need = (phantom.size + sino) * 4 / 1e9
+            raise MemoryError(
+                f"ASTRA could not forward project: phantom {phantom.shape} "
+                f"({phantom.nbytes / 1e9:.1f} GB) + sinogram "
+                f"{int(acq.det_height)}x{self.NumProjections}x"
+                f"{int(acq.det_width)} ({sino * 4 / 1e9:.1f} GB) = "
+                f"{need:.1f} GB, all of which must fit on the GPU at once. "
+                f"Reduce the volume or the detector, or set "
+                f"phantom_size_mm / max_phantom_voxels. Original error: {exc}"
+            ) from exc
         astra.data3d.delete(proj_id)
         return proj
 

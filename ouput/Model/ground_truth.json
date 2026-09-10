@@ -1,0 +1,14 @@
+{
+  "path": "tests\\model\\Greymon3D.obj",
+  "scale": 2.0,
+  "mu": 0.042,
+  "open_edges": 0,
+  "triangles": 476194,
+  "bounds_mm": [
+    6.988144,
+    10.066226,
+    7.0
+  ],
+  "filled_voxels": 3215317,
+  "filled_mm3": 25.722536000000005
+}

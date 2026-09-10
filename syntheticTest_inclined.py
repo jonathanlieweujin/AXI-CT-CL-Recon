@@ -7,7 +7,7 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
 LaminographyMethod = LaminographyMethodConstants.INCLINED
-DST = rf"path\{LaminographyMethod}"
+DST = rf"ouput\Synthetic\{LaminographyMethod}"
 DetU = 1200
 DetV = 1401
 DetZ = 721

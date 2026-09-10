@@ -7,7 +7,7 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
 Phantom = VxPhantomConstants.PCB_PANEL
-DST = rf"path\{Phantom}"
+DST = rf"ouput\Synthetic\{Phantom}"
 DetU = 500
 DetV = 500
 DetZ = 721

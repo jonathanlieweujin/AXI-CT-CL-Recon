@@ -31,7 +31,11 @@ the package rather than in separate scripts.
   - [Phantom sizing](#phantom-sizing)
   - [BGA phantom](#bga-phantom)
   - [PCB panel phantom](#pcb-panel-phantom)
+  - [3D model phantoms (STL / OBJ)](#3d-model-phantoms-stl--obj)
+  - [Memory](#memory)
+- [Sample dataset](#sample-dataset)
 - [Tests](#tests)
+- [Future Implementations](#future-implementations)
 - [Notes](#notes)
 
 ## CT vs CL
@@ -68,9 +72,11 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 | `Manager/Tool/Quality/__init__.py` | TIGRE backend (`VxTool`, `VxGeom`): builds the TIGRE geometry and runs reconstruction. |
 | `Manager/Tool/Performance/__init__.py` | ASTRA backend (`VxTool`): same interface, ASTRA toolbox, plus `plot_geometry` for inspecting the scan vectors. |
 | `syntheticTest.py` | Entry point: sets the acquisition geometry and writes a synthetic dataset (with a commented-out projection viewer). |
+| `syntheticTest_3dModel.py` | Entry point: generates a dataset from a `.obj` / `.stl` model instead of a built-in phantom. See [Sample dataset](#sample-dataset). |
 | `SyntheticDataGenerator/__init__.py` | `VxSyntheticDataGenerator`: the generator entry point. Derives the binned/unbinned parameter pair, builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. See [Synthetic data](#synthetic-data). |
 | `SyntheticDataGenerator/Structures/bga.py` | `BgaStructure`: BGA / WLCSP joint phantom at physical scale, with seeded IPC-7095 defects and a ground-truth manifest. See [BGA phantom](#bga-phantom). |
 | `SyntheticDataGenerator/Structures/pcb_panel.py` | `PcbPanelStructure`: PCB panel phantom measured off the FID_2 reference acquisition. See [PCB panel phantom](#pcb-panel-phantom). |
+| `SyntheticDataGenerator/Structures/mesh.py` | `MeshStructure`: voxelises an `.stl` or `.obj` model into a phantom with VTK. See [3D model phantoms](#3d-model-phantoms-stl--obj). |
 | `SyntheticDataGenerator/Structures/materials.py` | Linear attenuation coefficients (mm⁻¹, 60 keV) shared by the phantoms. |
 | `tests/` | Pytest suite: flow equivalence and redundancy weighting, plus the synthetic dataset generator they run against. |
 
@@ -156,7 +162,10 @@ Lightweight Constructions.
 - An NVIDIA GPU + driver. No system CUDA Toolkit is needed at runtime: `astra-toolbox`
   ships its own CUDA runtime via pip, and the TIGRE wheel is self-contained. The
   Toolkit (`nvcc`) is only required to *build* TIGRE from source.
-- `numpy`, `matplotlib`, `opencv-python`, `scipy`, and `pytest` for the test suite
+- `numpy`, `matplotlib`, `opencv-python`, `scipy`, `vtk`, and `pytest` for the
+  test suite. `astra`, `vtk` and `scipy` are imported at the top of
+  `SyntheticDataGenerator`, so all three must be present to import it at all -
+  not only to project.
 - One or both reconstruction backends:
   - [TIGRE](https://github.com/CERN/TIGRE): built from source, see Installation
   - [ASTRA Toolbox](https://astra-toolbox.com/): `astra-toolbox` on PyPI
@@ -178,7 +187,7 @@ conda create -p ".venv" python=3.13 pip -y
 ### 2. Install the packages
 
 ```powershell
-.venv\python.exe -m pip install numpy matplotlib opencv-python scipy pytest astra-toolbox
+.venv\python.exe -m pip install numpy matplotlib opencv-python scipy vtk pytest astra-toolbox
 ```
 
 This covers everything except TIGRE:
@@ -191,6 +200,7 @@ This covers everything except TIGRE:
 | `scipy` | TIGRE / ASTRA dependency |
 | `pytest` | `tests/` |
 | `astra-toolbox` | Performance backend (bundles its own CUDA runtime + cuFFT) |
+| `vtk` | Reading and voxelising `.stl` / `.obj` model phantoms |
 
 ### 3. Install TIGRE
 
@@ -214,7 +224,7 @@ TIGRE pulls in `h5py` and `tqdm` as dependencies.
 ### 4. Verify
 
 ```powershell
-.venv\python.exe -c "import numpy, matplotlib, cv2, scipy, astra, tigre.algorithms; print('ok', astra.use_cuda())"
+.venv\python.exe -c "import numpy, matplotlib, cv2, scipy, vtk, astra, tigre.algorithms; print('ok', astra.use_cuda())"
 ```
 
 `astra.use_cuda()` must print `True`: if it prints `False`, the GPU is not visible
@@ -269,7 +279,7 @@ print(generator.Describe())
 | `SetParams(...)` | Derives the geometries a dataset needs from one unbinned detector description: the reconstruction geometry (binned) and the acquisition geometry (unbinned, the detector the projections are stored at). `volume` is the *reconstruction* volume only: it does not size the phantom. Returns the reconstruction param. |
 | `PhantomSizeMm` / `PhantomVolume` | The box the phantom is built in, mm and voxels. Thickness comes from the phantom class, lateral extent is solved from the geometry so the object covers the detector at every angle. See [Phantom sizing](#phantom-sizing). |
 | `MinimumPhantomVolume()` | Smallest box that keeps the phantom's own edge out of every projection, or `None` when no size achieves it. |
-| `Run()` | Builds the phantom and forward-projects it. Leaves the phantom on `Volume` and the projections on `Sinogram`, in ASTRA `(det_v, angles, det_u)` order. |
+| `Run(model3DPath=None, model_scale=1.0, model_mu=None)` | Builds the phantom and forward-projects it. Leaves the phantom on `Volume` and the projections on `Sinogram`, in ASTRA `(det_v, angles, det_u)` order. Given a `.stl` or `.obj` path it voxelises that instead of `PhantomKind`. See [3D model phantoms](#3d-model-phantoms-stl--obj). |
 | `Save(root)` | Writes `Corrected/`, `Config/geometry.config` and `phantom.npy` under `root`. Projects first if `Run` has not been called. |
 | `Generate(root)` | `Run` then `Save`, in one call. |
 | `VoxelSize` / `NumProjections` | Derived geometry values. |
@@ -316,9 +326,14 @@ projection ever happens. `phantom.npy` is saved cropped to the reconstruction
 volume — block-averaged back down when binning applies — so it still compares
 directly against a reconstruction.
 
-`SOLID` and `SLAB` are exempt: their features are fractions of the voxel array
-rather than physical sizes, so they have no size to solve for and are still
-built on the reconstruction grid.
+Two exemptions, for opposite reasons:
+
+- `SOLID` and `SLAB` have no physical size at all - their features are
+  fractions of the voxel array - so there is nothing to solve for and they are
+  still built on the reconstruction grid.
+- A **model phantom** is a genuinely finite object. Its edge in the projections
+  is real, not an artefact of the box stopping early, so the coverage solve is
+  skipped and the box is the model bounding box plus a margin.
 
 `VxPhantomConstants` selects the shape: `SOLID` (sphere plus an off-centre rod,
 so a mirrored reconstruction cannot score as a match), `SLAB` (a thin plate with
@@ -395,6 +410,72 @@ acquisition does, so `binning` is applied to the reconstruction geometry only.
 With `binning=1` the two geometries are the same object, which is how the written
 config knows binning has not already been applied.
 
+### 3D model phantoms (STL / OBJ)
+
+`Run` takes an optional model path, which replaces the built-in phantom:
+
+```python
+generator.SetParams(...)
+generator.Run(model3DPath=r"part.stl", model_scale=1.0, model_mu=MU_CU)
+generator.Save(DST)
+```
+
+`MeshStructure` (`SyntheticDataGenerator/Structures/mesh.py`) reads the file
+with VTK, centres it on the origin, and voxelises it. The box is the model
+bounding box plus four voxels on each side, applied through the same
+`phantom_size_mm` override described in [Phantom sizing](#phantom-sizing), so
+the projection path is unchanged.
+
+| Format | Read by |
+| --- | --- |
+| `.stl` | `vtkSTLReader` |
+| `.obj` | `vtkOBJReader` |
+| `.fbx` | **not supported** - VTK has no FBX importer (proprietary Autodesk format). Convert to OBJ or glTF first. |
+
+**The fill is solid, not a shell.** `vtkPolyDataToImageStencil` marks every
+voxel inside the closed surface; a shell would give the wrong line integrals,
+since an X-ray sees the material a ray passes through rather than the skin it
+crosses. Checked against an analytic volume - a 2 mm sphere with a 0.6 mm hole
+drilled through, 29.1948 mm³:
+
+| voxel | grid | time | measured | error |
+| --- | --- | --- | --- | --- |
+| 0.050 mm | 80 x 76 x 80 | 0.18 s | 29.1945 mm³ | -0.00 % |
+| 0.020 mm | 200 x 191 x 200 | 0.25 s | 29.0960 mm³ | -0.34 % |
+| 0.010 mm | 400 x 382 x 400 | 0.40 s | 29.0816 mm³ | -0.39 % |
+
+`model_mu` is the linear attenuation coefficient written into every voxel
+inside the surface, defaulting to copper. STL has no material information at
+all, so one file is one material; `.obj` group and glTF per-node materials
+would be needed for a multi-material assembly, which is not implemented.
+
+`MeshStructure.Build` also returns an info dict - triangle count, bounding box,
+open-edge count, filled voxels and filled mm³ - which `Run` leaves on
+`Manifest` and `Save` writes to `ground_truth.json`.
+
+### Memory
+
+`create_sino3d_gpu` needs the phantom **and** the sinogram resident on the GPU
+at once. When that allocation fails ASTRA reports
+`Cannot create cython.array from NULL pointer`, which says nothing about size,
+so the sizes are checked and reported here instead:
+
+- `max_phantom_voxels` on `SetParams` caps the phantom. Past it the box is
+  clamped and a warning names the phantom size, the sinogram size and their
+  total in GB. The default is 3e9 voxels, i.e. ~12 GB of float32 - **higher
+  than most cards**, so set it to suit yours.
+- A failed `create_sino3d_gpu` is re-raised as a `MemoryError` carrying both
+  shapes and their total, rather than the bare NULL-pointer `ValueError`.
+
+The sinogram is fixed by the detector and angle count, so when memory is tight
+reducing `DetU`/`DetV` often buys more than shrinking the volume: at
+3072 x 3072 x 180 the sinogram alone is 6.8 GB, and halving the detector cuts
+it to 1.7 GB.
+
+## Sample dataset
+
+Greymon: <https://free3d.com/3d-model/greymon-39969.html>
+
 ## Tests
 
 ```powershell
@@ -412,6 +493,117 @@ projections came from. It needs the datasets on disk first:
 
 That writes roughly 4.5 GB of projections per dataset under `DATASET_ROOT`, an
 absolute path set at the top of both files.
+
+## Future Implementations
+
+### Flat field Correction
+
+Beer Lambert absorbtion law implementation with input dark, flat and source projection image(s). Support single, average and index application, where epsilon e = 1e-5.
+
+### Geometry Alignment Optimisation / Jitter Correction
+
+Recovering the geometry the data was actually taken with, rather than the one
+that was declared: systematic setup error (centre of rotation, detector tilt,
+magnification) and per-projection jitter (stage wobble, sample motion).
+
+**Where the correction goes.** `GetScanGeometry()` is the single point every
+backend takes its vectors from, so it is where a correction belongs: nominal
+`(n, 12)` from `VxComputeGeometry`, compose a setup delta and an optional
+per-view rigid delta on top, hand the corrected rows to the backend. This is
+the structure TomoJAX uses (`pose_stack = setup_pose @ pose_delta`).
+
+**What must not be optimised: the raw 12-vector.** It is where a correction is
+applied, never how it is parametrised. Measured on this geometry, 256 angles:
+
+- Rotating or translating every view together with the object changes the
+  projections by ~1e-12 px. Alignment solves geometry and volume jointly, so
+  those 6 directions are exactly unobservable and the normal equations are
+  singular in them. Damping hides that; it does not fix it.
+- Scaling `U` by 2 % (non-square pixels) moves points 8.6 px, shearing `V`
+  toward `U` moves them 8.8 px. Both are large, easily fitted, and physically
+  impossible. Given those degrees of freedom an optimiser will absorb beam
+  hardening and gain drift into the geometry and report a lower loss.
+- 12 x 256 = 3072 free numbers, against 1280 for a 5-DOF per-view pose, 60 for
+  a spline pose (12 knots), and 6 for the setup vector alone.
+
+**Parametrisation.** Shared setup vector (`tilt_x`, `tilt_y`, `offset_u`,
+`offset_v`, `sod`, `sdd` - already on `VxParam`), plus an optional per-view
+rigid delta constrained to a spline over angle rather than free per view.
+Sizing matters more here than in a JAX toolkit: with no autodiff behind ASTRA
+or TIGRE, finite differences cost ~2N forward projections per Jacobian. Twelve
+projections for the setup vector is affordable; 2560 for a free per-view pose
+is not.
+
+**Gauge.** The 6 global rigid directions above have to be pinned before any
+fit - anchor the mean pose delta to zero, as TomoJAX's `anchor_mean` policy
+does. `offset_u` and `volume_mid_x` are near-degenerate for the same reason and
+should not be fitted together.
+
+**Validation.** The synthetic generator is the harness: perturb a known
+geometry, generate, fit, and check the parameters come back. `phantom.npy` and
+`ground_truth.json` give a scoring target that does not depend on eyeballing a
+slice.
+
+#### The three setups do not take a uniform treatment
+
+Measured differences that change what is fittable:
+
+| | CT (`INCLINED`, 90) | CL `INCLINED` (51) | CL `COPLANAR` (51) |
+| --- | --- | --- | --- |
+| `tilt_y` effect on the vectors (0 -> 5 deg) | 0.0073 | 25.18 | **0.0000** |
+| views 180 deg apart conjugate | **yes, exact** | no | no |
+| detector axes rotate per view | `U` only | `U` and `V` | **neither** |
+| Wang redundancy weighting | yes | no | no |
+
+**CT (`INCLINED`, `tilt_x = 90`)**
+
+- Centre of rotation dominates; it is `offset_u`. Seed it before optimising -
+  views 0 and 180 deg are exactly conjugate here, so the classic opposing-pair
+  match and a centre-of-mass-along-`u` estimate both apply.
+- Fit `offset_u`, `tilt_x` around 90, and magnification. **Fix `tilt_y`** - 5
+  deg of it moves the vectors by 0.0073, so it is effectively unobservable and
+  will only add a flat direction.
+- `to_apply_redundancy_weighting` switches on hard thresholds
+  (`offset_u != 0`, `abs(tilt_x - 90) <= 0.5`). An optimiser crossing either
+  sees a step change in the objective, so freeze the weighting decision for the
+  duration of a fit rather than re-evaluating it per iteration.
+
+**CL `INCLINED`**
+
+- No conjugate views, so the CT centre-of-rotation seeds do not transfer. Needs
+  a different initialiser - a fiducial, or a coarse grid search on `offset_u`.
+- `tilt_y` is fully live (25.18) and belongs in the fit set, unlike CT.
+- `tilt_x` is strongly observable but couples to axial scale; fit it jointly
+  with `sod`/`sdd` or hold magnification fixed.
+- Both `U` and `V` rotate per view, so per-view orientation error is real and a
+  full rigid pose delta is meaningful. The missing wedge enlarges the null
+  space, so lean harder on the spline constraint.
+
+**CL `COPLANAR`**
+
+- **`tilt_y` must be excluded from the parameter set.** The builder ignores it
+  entirely (0.0000 change), so including it contributes an exactly flat
+  direction and a singular Hessian.
+- `U` and `V` are constant across views, so per-view orientation error cannot
+  be represented by construction. Per-view corrections reduce to translations -
+  a smaller and better conditioned problem than the inclined case.
+- The detector tracks the object centre exactly (the shadow of the origin lands
+  at `u = v = 0` at every angle), so detector offsets are the clean handle -
+  and note an offset is what breaks that tracking.
+- No redundancy weighting, so no threshold discontinuity in the objective.
+- Cheapest setup to validate against: a coplanar phantom needs no lateral
+  margin at all (see [Phantom sizing](#phantom-sizing)), so the test datasets
+  are a fraction of the size the inclined ones need.
+
+#### Order of work
+
+1. Correction layer on `GetScanGeometry()` - compose deltas onto the nominal
+   vectors, no solver yet, verified by round-tripping a known perturbation.
+2. Setup-only fit (6 parameters, finite differences), per-setup parameter masks
+   as above, validated against synthetic data with a known offset.
+3. Gauge anchoring and the seeds, CT first since it has real initialisers.
+4. Smooth per-view delta (spline) for jitter, coarse-to-fine, inclined last
+   since it is the worst conditioned.
 
 ## Notes
 
