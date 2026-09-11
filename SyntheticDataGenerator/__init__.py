@@ -17,6 +17,7 @@ from SyntheticDataGenerator.Structures.bga import BgaStructure
 from SyntheticDataGenerator.Structures.hbm import HBMStructure
 from SyntheticDataGenerator.Structures.materials import MU_CU
 from SyntheticDataGenerator.Structures.mesh import MeshStructure
+from SyntheticDataGenerator.Structures.micro_jig import MicroJigStructure
 from SyntheticDataGenerator.Structures.pcb_panel import PcbPanelStructure
 from SyntheticDataGenerator.Structures.slab import SlabStructure
 from SyntheticDataGenerator.Structures.solid import SolidStructure
@@ -31,6 +32,7 @@ class VxPhantomConstants(str, Enum):
     BGA   = "BGA"    # die-on-substrate BGA joints with IPC-7095 void defects
     WLCSP = "WLCSP"  # wafer-level CSP: balls straight onto the die, no substrate
     PCB_PANEL = "PCB_PANEL"  # PCB panel matching the FID_2 reference (200um bumps, PTH vias)
+    MICRO_JIG = "MICRO_JIG"  # 22-sphere VDI/VDE 2630 accuracy check piece
 
     def __str__(self) -> str:
         return self.value
@@ -470,6 +472,8 @@ class VxSyntheticDataGenerator:
                 return BgaStructure
         if k == VxPhantomConstants.HBM:
                 return HBMStructure
+        if k == VxPhantomConstants.MICRO_JIG:
+                return MicroJigStructure
         return None
 
     def solveCoverage_Internal(self, thickness_mm: float):
@@ -532,6 +536,9 @@ class VxSyntheticDataGenerator:
             return vol
         if self.PhantomKind == VxPhantomConstants.HBM:
             return HBMStructure.GetStructure(shape, vs)
+        if self.PhantomKind == VxPhantomConstants.MICRO_JIG:
+            vol, self.Manifest = MicroJigStructure.Build(shape, vs)
+            return vol
         if self.PhantomKind == VxPhantomConstants.SOLID:
             return SolidStructure.GetStructure(shape, vs)
         return SlabStructure.GetStructure(shape, vs)

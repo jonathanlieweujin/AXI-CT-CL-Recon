@@ -6,16 +6,17 @@ from SyntheticDataGenerator import VxSyntheticDataGenerator, VxPhantomConstants
 from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
-LaminographyMethod = LaminographyMethodConstants.INCLINED
-DST = rf"output\Synthetic\{LaminographyMethod}"
+Phantom = VxPhantomConstants.MICRO_JIG
+
+DST = rf"output\Synthetic\{Phantom}"
 DetU = 1200
 DetV = 1401
 DetZ = 721
 
-DetPitch = 0.084 * 2
+DetPitch = 0.2
 Binning = 1
 
-Phantom = VxPhantomConstants.HBM
+LaminographyMethod = LaminographyMethodConstants.INCLINED
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 
 VolX = 1200

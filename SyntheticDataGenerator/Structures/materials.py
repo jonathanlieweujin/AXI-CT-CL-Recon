@@ -10,17 +10,28 @@ forward projection through a volume gridded in mm is a physical line integral.
   FR4 laminate        1.85               0.055
   BT resin substrate  1.90               0.060
   silicon             2.33 x 0.3207      0.075
+  acrylic (PMMA)      1.18 x ~0.30       0.035
+  ruby (Cr:Al2O3)     3.98 x ~0.28       0.115
+  ceramic (Al2O3)     3.90 x ~0.26       0.101
   copper              8.96 x 1.593       1.427
+  Invar (Fe64Ni36)    8.10 x ~1.50       1.215
   SAC305 solder       7.37 x ~6.51       4.790   (96.5Sn/3.0Ag/0.5Cu)
 
 Solder is ~64x silicon and ~3.4x copper, which is why a ball reads as opaque
-and a void is the only thing visible through it.
+and a void is the only thing visible through it. Invar sits close to copper
+because iron/nickel and copper have near-identical mass attenuation in this
+Compton-dominated regime - it is density, not composition, that separates
+them.
 """
 
-MU_AIR    = 0.000
-MU_MASK   = 0.042
-MU_FR4    = 0.055
-MU_BT     = 0.060
-MU_SI     = 0.075
-MU_CU     = 1.427
-MU_SOLDER = 4.790
+MU_AIR     = 0.000
+MU_MASK    = 0.042
+MU_FR4     = 0.055
+MU_BT      = 0.060
+MU_SI      = 0.075
+MU_ACRYLIC = 0.035
+MU_RUBY    = 0.115
+MU_CERAMIC = 0.101
+MU_CU      = 1.427
+MU_INVAR   = 1.215
+MU_SOLDER  = 4.790
