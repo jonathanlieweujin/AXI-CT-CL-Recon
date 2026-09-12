@@ -11,6 +11,7 @@ forward projection through a volume gridded in mm is a physical line integral.
   BT resin substrate  1.90               0.060
   silicon             2.33 x 0.3207      0.075
   acrylic (PMMA)      1.18 x ~0.30       0.035
+  quartz glass (SiO2) 2.20 x ~0.27       0.059
   ruby (Cr:Al2O3)     3.98 x ~0.28       0.115
   ceramic (Al2O3)     3.90 x ~0.26       0.101
   copper              8.96 x 1.593       1.427
@@ -30,6 +31,7 @@ MU_FR4     = 0.055
 MU_BT      = 0.060
 MU_SI      = 0.075
 MU_ACRYLIC = 0.035
+MU_QUARTZ  = 0.059
 MU_RUBY    = 0.115
 MU_CERAMIC = 0.101
 MU_CU      = 1.427

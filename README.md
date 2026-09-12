@@ -49,7 +49,7 @@ Both modes share the same code path; the geometry decides which one you get:
   source/detector pair traverses the tilted orbit.
 
 Switch backend with `Mode = VxFlowMethod.QUALITY` (TIGRE) or
-`Mode = VxFlowMethod.PERFORMANCE` (ASTRA) in `reconTest.py`.
+`Mode = VxFlowMethod.PERFORMANCE` (ASTRA) in `tests/reconTest.py`.
 
 *Fisher, S., Mavrogordato, M. N., Blumensath, T., & Boardman, R. P. (2019).
 Laminography in the lab: Imaging planar objects using a conventional x-ray CT
@@ -60,7 +60,8 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 
 | Path | Purpose |
 | --- | --- |
-| `reconTest.py` | Entry point: sets geometry/volume parameters, loads projections, reconstructs, and displays slices with a slider. |
+| `tests/reconTest.py` | Entry point: sets geometry/volume parameters, loads projections, reconstructs, and displays slices with a slider. Every parameter is also a CLI flag (`--src`, `--tilt-x`, `--sod`, …) - run with `--help` for the full list. |
+| `tests/reconWithConfigTest.py` | Entry point: reconstructs a dataset straight from its own `Config/geometry.config` rather than hand-built params - the counterpart to `manager.LoadConfig`. `--dataset <root>` points it at a dataset's root folder (`Corrected/`, `Config/geometry.config`, output `Recon/`); `--src`/`--src-config`/`--dst` override the three individually. |
 | `Manager/__init__.py` | `VxManager`: the single entry point: owns the parameters, both backends, the projections and the result. `LoadImages` / `SaveImages` read and write a projection stack, `NormaliseProjections` conditions one, `Run` reconstructs. See [Manager](#manager). |
 | `Manager/Param/__init__.py` | `VxParam`: the shared geometry/acquisition parameter container. Applies binning to the detector size, pitch and offsets on construction. |
 | `Manager/Constants/flow_method.py` | `VxFlowMethod`: backend selector enum (`QUALITY` / `PERFORMANCE`). |
@@ -71,14 +72,18 @@ scanner. Measurement Science and Technology, 30(3), Article 035401.
 | `Manager/Util/redundancy_weighting.py` | `to_apply_redundancy_weighting`: decides when Wang redundancy weights apply (offset detector, upright CT geometry only). |
 | `Manager/Tool/Quality/__init__.py` | TIGRE backend (`VxTool`, `VxGeom`): builds the TIGRE geometry and runs reconstruction. |
 | `Manager/Tool/Performance/__init__.py` | ASTRA backend (`VxTool`): same interface, ASTRA toolbox, plus `plot_geometry` for inspecting the scan vectors. |
-| `syntheticTest.py` | Entry point: sets the acquisition geometry and writes a synthetic dataset (with a commented-out projection viewer). |
-| `syntheticTest_3dModel.py` | Entry point: generates a dataset from a `.obj` / `.stl` model instead of a built-in phantom. See [Sample dataset](#sample-dataset). |
+| `tests/syntheticTest_inclined.py` | Entry point: writes an inclined-laminography `MICRO_JIG` dataset. `--tilt`, `--offset-u`/`--offset-v` are CLI flags; each combination gets its own output subfolder so runs don't overwrite each other. |
+| `tests/syntheticTest_coplanar.py` | Entry point: writes a coplanar-laminography `PCB_PANEL` dataset (with a commented-out projection viewer). Same CLI-flag convention as `syntheticTest_inclined.py`, plus detector/volume/geometry overrides. |
+| `tests/syntheticTest_3dModel.py` | Entry point: generates a dataset from a `.obj` / `.stl` model instead of a built-in phantom (`--model`, `--model-scale`, plus the same tilt/offset/geometry flags). See [Sample dataset](#sample-dataset). |
 | `SyntheticDataGenerator/__init__.py` | `VxSyntheticDataGenerator`: the generator entry point. Derives the binned/unbinned parameter pair, builds a phantom, forward-projects it through the declared geometry, and writes a `Corrected/` + `Config/` dataset matching the layout of a real acquisition. See [Synthetic data](#synthetic-data). |
 | `SyntheticDataGenerator/Structures/bga.py` | `BgaStructure`: BGA / WLCSP joint phantom at physical scale, with seeded IPC-7095 defects and a ground-truth manifest. See [BGA phantom](#bga-phantom). |
 | `SyntheticDataGenerator/Structures/pcb_panel.py` | `PcbPanelStructure`: PCB panel phantom measured off the FID_2 reference acquisition. See [PCB panel phantom](#pcb-panel-phantom). |
+| `SyntheticDataGenerator/Structures/jig.py` | `JigStructure`: full-size (~76 mm) 22-sphere VDI/VDE 2630 accuracy check piece, for a general industrial CT. |
+| `SyntheticDataGenerator/Structures/micro_jig.py` | `MicroJigStructure`: small-FOV (~4 mm) 22-ball check piece fitted to published multisphere-standard metrology, for a micro-CT / laminography-scale rig. |
 | `SyntheticDataGenerator/Structures/mesh.py` | `MeshStructure`: voxelises an `.stl` or `.obj` model into a phantom with VTK. See [3D model phantoms](#3d-model-phantoms-stl--obj). |
 | `SyntheticDataGenerator/Structures/materials.py` | Linear attenuation coefficients (mm⁻¹, 60 keV) shared by the phantoms. |
-| `tests/` | Pytest suite: flow equivalence and redundancy weighting, plus the synthetic dataset generator they run against. |
+| `tests/tilt_optimizer.py` | Reprojection-matching optimiser that recovers a scanner's tilt (`DetTiltX`) and detector offset (`offset_u`/`offset_v`) purely from a `MICRO_JIG` dataset's projections - see its module docstring for the method and references. |
+| `tests/` | Pytest suite plus the standalone entry-point scripts above and the synthetic dataset generator they run against. |
 
 ## Manager
 
@@ -195,7 +200,7 @@ This covers everything except TIGRE:
 | Package | Used by |
 | --- | --- |
 | `numpy` | everywhere |
-| `matplotlib` | `reconTest.py` slice viewer, `plot_geometry` |
+| `matplotlib` | `tests/reconTest.py` slice viewer, `plot_geometry` |
 | `opencv-python` (`cv2`) | projection loading and normalisation |
 | `scipy` | TIGRE / ASTRA dependency |
 | `pytest` | `tests/` |
@@ -233,10 +238,12 @@ to ASTRA and reconstruction will fail.
 ## Running
 
 ```powershell
-.venv\python.exe reconTest.py
+.venv\python.exe tests\reconTest.py
 ```
 
-Before running, check the parameters at the top of `reconTest.py`:
+Every parameter below is also a CLI flag (`--src`, `--tilt-x`, `--sod`, …) -
+run `.venv\python.exe tests\reconTest.py --help` for the full list. Check the
+defaults at the top of `tests/reconTest.py`:
 
 - `SRC`: folder of normalised raw projections
 - `DetU` / `DetV` / `DetZ`: detector width, height, and number of projections
@@ -259,7 +266,7 @@ that produced them.
 It mirrors `VxManager`: construct, set the params, generate.
 
 ```powershell
-.venv\python.exe syntheticTest.py
+.venv\python.exe tests\syntheticTest_inclined.py
 ```
 
 ```python
@@ -609,6 +616,6 @@ Measured differences that change what is fittable:
 
 - Raw projections, reconstructed volumes, and other imaging data are excluded by
   `.gitignore`: keep them outside the repository.
-- `SRC` in `reconTest.py` and `DATASET_ROOT` in `tests/` are absolute,
+- `SRC` in `tests/reconTest.py` and `DATASET_ROOT` in `tests/` are absolute,
   machine-specific paths and need adjusting per setup. There are no hardcoded CUDA
   or TIGRE paths: both are resolved from the installed packages in `.venv`.

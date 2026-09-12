@@ -1,6 +1,12 @@
+import argparse
+import os
+import sys
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Manager import VxManager
 from Manager.Param import VxParam
@@ -9,45 +15,65 @@ from Manager.Constants.laminography_method import LaminographyMethodConstants
 from Manager.Constants.flow_method import VxFlowMethod
 
 # --- Parameters ---
-SRC = r"path"
-DetU = 2803
-DetV = 2401
-DetZ = 721
+_cli = argparse.ArgumentParser()
+_cli.add_argument("--src", default=r"path", help="Folder of raw projection images to reconstruct")
+_cli.add_argument("--det-u", type=int, default=2803, help="Detector width in pixels")
+_cli.add_argument("--det-v", type=int, default=2401, help="Detector height in pixels")
+_cli.add_argument("--det-z", type=int, default=721, help="Number of projection angles")
+_cli.add_argument("--left-pad", type=int, default=0)
+_cli.add_argument("--right-pad", type=int, default=0)
+_cli.add_argument("--det-pitch", type=float, default=0.1, help="Detector pixel pitch, mm")
+_cli.add_argument("--binning", type=int, default=4)
+_cli.add_argument("--interval", type=int, default=2, help="Use every Nth projection angle")
+_cli.add_argument("--vol-x", type=int, default=700)
+_cli.add_argument("--vol-y", type=int, default=700)
+_cli.add_argument("--vol-z", type=int, default=600)
+_cli.add_argument("--sod", type=float, default=34.0, help="Source-to-object distance, mm")
+_cli.add_argument("--sdd", type=float, default=622.0, help="Source-to-detector distance, mm")
+_cli.add_argument("--tilt-x", type=float, default=90.0, help="DetTiltX in degrees")
+_cli.add_argument("--tilt-y", type=float, default=0.0, help="DetTiltY in degrees")
+_cli.add_argument("--offset-u", type=float, default=-38.52, help="DetOffsetU in pixels")
+_cli.add_argument("--offset-v", type=float, default=0.0, help="DetOffsetV in pixels")
+_cli.add_argument("--iterations", type=int, default=1)
+_args, _ = _cli.parse_known_args()
 
-# LEFT_PAD = int(DetU / 2)
-LEFT_PAD = 0
-# RIGHT_PAD = int(DetU / 2)
-RIGHT_PAD = 0
+SRC = _args.src
+DetU = _args.det_u
+DetV = _args.det_v
+DetZ = _args.det_z
 
-DetPitch = 0.1
-Binning = 4
-Interval = 2
+LEFT_PAD = _args.left_pad
+RIGHT_PAD = _args.right_pad
+
+DetPitch = _args.det_pitch
+Binning = _args.binning
+Interval = _args.interval
 Mode = VxFlowMethod.QUALITY
 LaminographyMethod = LaminographyMethodConstants.INCLINED
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 ProjectionAngles = ProjectionAngles[::Interval]
 NumImgs = len(ProjectionAngles)
 
-VolX = 700
-VolY = 700
-VolZ = 600
+VolX = _args.vol_x
+VolY = _args.vol_y
+VolZ = _args.vol_z
 DstPixelFormat = "u8"
 
-SOD = 34
-SDD = 622
+SOD = _args.sod
+SDD = _args.sdd
 
-DetTiltX = 90
-DetTiltY = 0
+DetTiltX = _args.tilt_x
+DetTiltY = _args.tilt_y
 
-DetOffsetU = -38.52
-DetOffsetV = 0
+DetOffsetU = _args.offset_u
+DetOffsetV = _args.offset_v
 
 # Offset in mm
 VolMidX = 0
 VolMidY = 0
 VolMidZ = 0
 
-Iterations = 1
+Iterations = _args.iterations
 
 # --- Build param ---
 param = VxParam(

@@ -1,95 +1,113 @@
 import numpy as np
 
-from SyntheticDataGenerator.Structures.materials import (
-    MU_ACRYLIC, MU_CERAMIC, MU_INVAR, MU_RUBY,
-)
+from SyntheticDataGenerator.Structures.materials import MU_QUARTZ, MU_RUBY
 
 
 class MicroJigStructure:
     """
-    MICRO_JIG: a 22-sphere calibration/verification test piece for
-    monitoring the sphere-centre-distance error SD (VDI/VDE 2617 p.13,
-    VDI/VDE 2630 p.1.3) and, paired with a length-standard artefact, the
-    length measuring error E of a CT scanner.
+    MICRO_JIG: a 22-ball calibration/verification test piece sized for a
+    micro-CT / small-field-of-view cone-beam setup, per VDI/VDE 2630-1.3.
+    This is a different scale of artefact from JigStructure - that one is a
+    full-size, ~76 mm industrial-CT jig; this one targets a ~5 mm field of
+    view, matching a rig with a source-to-object distance of only a few mm
+    (published spec: contained in a cylindrical volume ~4 mm diameter x
+    ~1.8 mm height).
 
-    The geometry here is a physically-motivated approximation, not a
-    calibrated CAD: a real unit's sphere coordinates are individually
-    calibrated and certified per serial number, so there is no single
-    "correct" layout to copy. What follows is built from the properties
-    that are intrinsic to this class of test piece:
+    Unlike the first cut of this phantom (a Fibonacci-sphere hedgehog, which
+    was a plausible-but-invented 3D shape), this geometry is fit directly to
+    published measurement data for the real artefact: a peer-reviewed paper
+    on this exact check piece lists 35 calibrated sphere-centre-to-centre
+    distances, grouped into 5 nominal lengths, together covering
+    "at least five different distances ... in a total of seven different
+    spatial directions" as VDI/VDE 2630-1.3 requires. The 22 balls (0.3 mm
+    ruby, on individual conical quartz-glass pillars rising from a quartz
+    base, per the source) split cleanly by id parity/grouping into 3 families
+    of 7 plus 1 centre ball:
 
-      22 precision spheres   one larger datum sphere (4 mm dia) used for
-                             CMM/CT base alignment, the other 21 at 3 mm
-      base body              Invar, rho 8.1 g/cm^3, alpha 1.3e-6 /K
-      ball shaft             ceramic
-      protective cover       acrylic glass
-      max measuring length   56.5 mm (sphere-centre to sphere-centre)
-      assembly weight        1.55 kg incl. mounting pallet
-      22 spheres positioned to evaluate ~25 measuring lengths for
-      VDI/VDE 2630 compliance
+      OUTER  (odd ids 1,3,..,13)   - distance to centre id 22 = 2.343 mm
+      INNER  (ids 15..21)          - distance to centre id 22 = 1.210 mm
+      UPPER  (even ids 2,4,..,14)  - distance to same-index INNER id = 1.134 mm
+      CENTRE (id 22)
 
-    A length-measurement report on this class of artefact names its
-    characteristics as sphere-id pairs (SD 1-15, SD 1-22, SD 3-16, SD 3-22,
-    SD 5-17, ...) that always pair an odd sphere id with another odd id or
-    with an even id, never in a way consistent with a single ring - so the
-    22 spheres are modelled as two interleaved 11-point rings: odd ids
-    (1, 3, .., 21) on the outer ring, even ids (2, 4, .., 22) on the inner
-    ring, the inner ring rotated by half a pitch (16.36 deg) so no sphere
-    sits radially behind another. The outer-ring radius is chosen so the
-    longest chord on 11 points (5 steps apart, the closest an odd count
-    gets to opposite) comes out at the 56.5 mm measuring length above.
-
-    In practice a scan is framed so the reconstruction volume sees only the
-    spheres and shafts, not the base - so the base sits low in the phantom
-    box here, outside where a caller would normally put the reconstruction
-    volume, but is still built because rays still cross it off-axis. That
-    is exactly the distinction PhantomSizeMm (the full phantom box) draws
-    against the recon `volume` elsewhere in this generator.
+    and two more measured lengths cross those families at a fixed index
+    shift of 3 (out of 7): OUTER[k] to INNER[k+3] = 2.850 mm, and OUTER[k] to
+    UPPER[k+3] = 3.600 mm. Assuming 7-fold rotational symmetry (matching the
+    7 families of 7) and that OUTER sits exactly opposite INNER/UPPER's
+    (k+3)th member (the shift that makes the 5 equations solvable with a
+    clean 180 deg relative phase - the fit converges to within a fraction of
+    a degree of exactly 180 regardless of starting point), these 5 equations
+    plus the published ~4 mm / ~1.8 mm envelope pin down a 3D layout - one
+    radius and one height per family - solved numerically (see below) and
+    verified to reproduce all 5 published lengths to 4-5 significant figures
+    while landing within ~3-5% of the stated envelope (4.11 mm diameter x
+    1.89 mm height here). This is fitted geometry, not the vendor's CAD -
+    the real part is individually calibrated per serial number - but it
+    reproduces real, published metrology rather than an invented shape.
 
     Linear attenuation coefficients (mm^-1, 60 keV scheme - see
-    materials.py): Invar 1.215, ruby 0.115, ceramic (Al2O3 shaft) 0.101,
-    acrylic 0.035.
+    materials.py): ruby 0.115, quartz glass 0.059.
     """
 
-    # Bounding box the phantom is designed for: 2x(base radius + cover gap +
-    # cover wall) laterally, base height + tallest pin/sphere + cover
-    # clearance + lid thickness in z, each padded ~4 mm so nothing touches
-    # the box wall.
-    DEFAULT_SIZE_MM = (76.0, 76.0, 55.0)
+    DEFAULT_SIZE_MM = (5.0, 5.0, 2.4)   # (width, length, height) mm, with margin
 
-    # sphere layout: two interleaved 11-point rings (odd ids outer, even
-    # ids inner), radius picked so the longest outer-ring chord is ~56.5 mm
-    N_PER_RING          = 11
-    OUTER_RADIUS_MM     = 28.5
-    INNER_RADIUS_MM     = 18.0
-    INNER_ROTATION_DEG  = 180.0 / N_PER_RING
+    N_PER_FAMILY = 7
+    BALL_DIA_MM  = 0.3
 
-    DATUM_SPHERE_DIA_MM = 4.0   # sphere 1 - the base-alignment datum
-    SPHERE_DIA_MM       = 3.0   # spheres 2..22
-    PIN_DIA_MM          = 1.2   # ceramic shaft diameter
+    # Solved from the published sphere-pair distances (see docstring). Each
+    # family sits at a fixed (radius, height); id -> (family, k) below.
+    # Heights are zero-centred (mean of the lowest feature - the base plate
+    # underside - and the highest - the tallest ball's top - is at z=0):
+    # every other Structure's Build() allocates a voxel grid centred on the
+    # origin, so a part built off-centre runs off the top of its own box
+    # and gets silently clipped in projection, however large DEFAULT_SIZE_MM
+    # is set - centring is what actually keeps the part inside the box.
+    OUTER_RADIUS_MM  = 1.905711
+    OUTER_HEIGHT_MM  = -0.722042
+    INNER_RADIUS_MM  = 0.891678
+    INNER_HEIGHT_MM  = -0.176919
+    UPPER_RADIUS_MM  = 1.322120
+    UPPER_HEIGHT_MM  = 0.872042
+    CENTER_HEIGHT_MM = 0.641011
 
-    OUTER_PIN_LEN_MM = 26.0   # base top -> outer-ring sphere centre
-    INNER_PIN_LEN_MM = 16.0   # base top -> inner-ring sphere centre
+    # OUTER[k] sits at 180 deg (opposite) relative to INNER[k+3]/UPPER[k+3]
+    # in the shared 7-fold angular indexing - see docstring.
+    OUTER_PHASE_DEG = 180.0
+    OUTER_INDEX_SHIFT = 3
 
-    BASE_RADIUS_MM = 31.0     # > OUTER_RADIUS_MM + PIN_DIA_MM/2, with margin
-    BASE_HEIGHT_MM = 18.0
-    BOSS_RADIUS_MM = 8.0      # central raised boss on the base, cosmetic
-    BOSS_HEIGHT_MM = 6.0
+    BASE_PLATE_RADIUS_MM = OUTER_RADIUS_MM + 0.3
+    BASE_PLATE_THICKNESS_MM = 0.15
 
-    COVER_GAP_MM  = 3.0    # air gap: base rim -> acrylic cover inner wall
-    COVER_WALL_MM = 2.0
-    COVER_TOP_CLEARANCE_MM = 3.0   # tallest sphere top -> underside of the lid
+    PILLAR_BASE_RADIUS_MM = 0.18
+    PILLAR_TIP_RADIUS_MM  = 0.07
 
-    MU_BASE   = MU_INVAR
-    MU_PIN    = MU_CERAMIC
-    MU_SPHERE = MU_RUBY
-    MU_COVER  = MU_ACRYLIC
+    MU_BASE = MU_QUARTZ
+    MU_BALL = MU_RUBY
 
     @staticmethod
     def GetStructure(vol_shape: tuple[int, int, int], voxel_size_mm: float) -> np.ndarray:
         """Phantom only, in ASTRA (z, y, x) order - the Structures interface."""
         vol, _ = MicroJigStructure.Build(vol_shape, voxel_size_mm)
         return vol
+
+    @staticmethod
+    def GetJigBallPosition() -> np.ndarray:
+        """
+        (22, 3) array of nominal ball centres, mm, in the same world frame
+        Build() paints into - i.e. with no position_noise_mm jitter and no
+        dependence on a voxel grid at all. For a consumer that only needs
+        the known geometry (e.g. a reprojection-based geometry-calibration
+        optimizer matching detected balls against where they *should*
+        project to), building the whole volume just to read back
+        `nominal_center_mm` off the manifest is unnecessary - this is the
+        same computation Build() does, factored out so both call it once
+        rather than keeping two copies of the ball layout in sync by hand.
+        """
+        H = MicroJigStructure
+        layout = H.ballLayout_Internal()
+        r = np.array([radius for _, _, radius, _, _ in layout])
+        theta = np.deg2rad([angle for _, _, _, angle, _ in layout])
+        z = np.array([height for _, _, _, _, height in layout])
+        return np.stack([r * np.cos(theta), r * np.sin(theta), z], axis=1)
 
     @staticmethod
     def Build(
@@ -106,14 +124,14 @@ class MicroJigStructure:
             voxel_size_mm:      isotropic voxel edge, mm.
             seed:                RNG seed for position_noise_mm.
             position_noise_mm:  std, mm, of isotropic Gaussian jitter applied
-                                 to each sphere centre - a stand-in for the
+                                 to each ball centre - a stand-in for the
                                  sphere-centre-distance error SD this test
                                  piece exists to monitor. 0 (default) places
-                                 every sphere at its nominal centre.
+                                 every ball at its nominal (fitted) centre.
 
         Returns:
-            (volume float32 (z, y, x), manifest: one dict per sphere with
-            id, ring, diameter_mm, nominal_center_mm, actual_center_mm).
+            (volume float32 (z, y, x), manifest: one dict per ball with id,
+            family, diameter_mm, nominal_center_mm, actual_center_mm).
         """
         H = MicroJigStructure
         vol_z, vol_y, vol_x = vol_shape
@@ -125,105 +143,118 @@ class MicroJigStructure:
         y1d = (np.arange(vol_y, dtype=np.float64) - vol_y / 2.0) * vs
         z1d = (np.arange(vol_z, dtype=np.float64) - vol_z / 2.0) * vs
 
-        tallest_top = (H.BASE_HEIGHT_MM + H.OUTER_PIN_LEN_MM
-                       + H.DATUM_SPHERE_DIA_MM / 2.0)
-        cover_top = tallest_top + H.COVER_TOP_CLEARANCE_MM
-        total_h = cover_top + H.COVER_WALL_MM
-        z_bottom = -total_h / 2.0
-        z_base_top = z_bottom + H.BASE_HEIGHT_MM
+        # base plate sits just under the shortest (OUTER) pillar stub
+        plate_top = H.OUTER_HEIGHT_MM - 0.15
+        H.paintDisc_Internal(
+            vol, x1d, y1d, z1d,
+            plate_top - H.BASE_PLATE_THICKNESS_MM, plate_top,
+            H.BASE_PLATE_RADIUS_MM, H.MU_BASE)
 
-        def zrange(lo, hi):
-            k0 = max(0, min(int(np.searchsorted(z1d, lo)), vol_z))
-            k1 = max(0, min(int(np.searchsorted(z1d, hi)), vol_z))
-            return k0, k1
+        balls = H.ballLayout_Internal()
 
-        r2 = x1d[None, :] ** 2 + y1d[:, None] ** 2   # (vol_y, vol_x)
-
-        # Invar base cylinder + central boss
-        k0, k1 = zrange(z_bottom, z_base_top)
-        vol[k0:k1, r2 < H.BASE_RADIUS_MM ** 2] = H.MU_BASE
-
-        k0, k1 = zrange(z_base_top, z_base_top + H.BOSS_HEIGHT_MM)
-        vol[k0:k1, r2 < H.BOSS_RADIUS_MM ** 2] = H.MU_BASE
-
-        # acrylic cover: cylindrical wall + top lid, kept clear of the base
-        cover_inner = H.BASE_RADIUS_MM + H.COVER_GAP_MM
-        cover_outer = cover_inner + H.COVER_WALL_MM
-        wall_mask = (r2 >= cover_inner ** 2) & (r2 < cover_outer ** 2)
-        k0, k1 = zrange(z_base_top, z_bottom + cover_top)
-        vol[k0:k1, wall_mask] = H.MU_COVER
-
-        lid_mask = r2 < cover_outer ** 2
-        k0, k1 = zrange(z_bottom + cover_top, z_bottom + cover_top + H.COVER_WALL_MM)
-        vol[k0:k1, lid_mask] = H.MU_COVER
-
-        # 22 spheres on ceramic pins, two interleaved 11-point rings
         manifest = []
-        for ring, radius, pin_len in (
-            ("outer", H.OUTER_RADIUS_MM, H.OUTER_PIN_LEN_MM),
-            ("inner", H.INNER_RADIUS_MM, H.INNER_PIN_LEN_MM),
-        ):
-            rot = 0.0 if ring == "outer" else H.INNER_ROTATION_DEG
-            for k in range(H.N_PER_RING):
-                sid = 2 * k + 1 if ring == "outer" else 2 * k + 2
-                angle = np.deg2rad(k * 360.0 / H.N_PER_RING + rot)
-                cx0, cy0 = radius * np.cos(angle), radius * np.sin(angle)
-                cz0 = z_base_top + pin_len
-                dia = H.DATUM_SPHERE_DIA_MM if sid == 1 else H.SPHERE_DIA_MM
+        for ball_id, family, radius, angle_deg, height in balls:
+            theta = np.deg2rad(angle_deg)
+            nominal = (float(radius * np.cos(theta)), float(radius * np.sin(theta)), float(height))
+            cx, cy, cz = nominal
+            if position_noise_mm > 0:
+                jx, jy, jz = rng.normal(scale=position_noise_mm, size=3)
+                cx, cy, cz = cx + jx, cy + jy, cz + jz
+            actual = (float(cx), float(cy), float(cz))
 
-                nominal = (float(cx0), float(cy0), float(cz0))
-                cx, cy, cz = cx0, cy0, cz0
-                if position_noise_mm > 0:
-                    jx, jy, jz = rng.normal(scale=position_noise_mm, size=3)
-                    cx, cy, cz = cx0 + jx, cy0 + jy, cz0 + jz
-                actual = (float(cx), float(cy), float(cz))
+            H.paintCone_Internal(
+                vol, x1d, y1d, z1d, cx, cy, plate_top, cz - H.BALL_DIA_MM * 0.15,
+                H.PILLAR_BASE_RADIUS_MM, H.PILLAR_TIP_RADIUS_MM, H.MU_BASE)
 
-                H.paintPinAndSphere_Internal(
-                    vol, x1d, y1d, z1d, cx, cy, z_base_top, cz, dia)
-                manifest.append(dict(
-                    id=sid, ring=ring, diameter_mm=dia,
-                    nominal_center_mm=nominal, actual_center_mm=actual,
-                ))
+            manifest.append(dict(
+                id=ball_id, family=family, diameter_mm=H.BALL_DIA_MM,
+                nominal_center_mm=nominal, actual_center_mm=actual,
+            ))
+
+        # balls painted after every pillar so they cleanly cap their tips
+        for m in manifest:
+            H.paintSphere_Internal(
+                vol, x1d, y1d, z1d, m["actual_center_mm"],
+                H.BALL_DIA_MM / 2.0, H.MU_BALL)
 
         return vol, manifest
 
     # private / internal
     @staticmethod
-    def paintPinAndSphere_Internal(vol, x1d, y1d, z1d, cx, cy, z_pin_bot,
-                                    cz, dia) -> None:
-        """Paint one ceramic shaft and its ruby ball into `vol` in place."""
+    def ballLayout_Internal() -> list[tuple[int, str, float, float, float]]:
+        """(ball_id, family, radius_mm, angle_deg, height_mm) for all 22 balls."""
         H = MicroJigStructure
+        step = 360.0 / H.N_PER_FAMILY
+        balls = []
+        for k in range(H.N_PER_FAMILY):
+            balls.append((2 * k + 1, "OUTER", H.OUTER_RADIUS_MM,
+                          (k + H.OUTER_INDEX_SHIFT) * step + H.OUTER_PHASE_DEG,
+                          H.OUTER_HEIGHT_MM))
+            balls.append((15 + k, "INNER", H.INNER_RADIUS_MM, k * step, H.INNER_HEIGHT_MM))
+            balls.append((2 * k + 2, "UPPER", H.UPPER_RADIUS_MM, k * step, H.UPPER_HEIGHT_MM))
+        balls.append((22, "CENTER", 0.0, 0.0, H.CENTER_HEIGHT_MM))
+        return balls
+
+    @staticmethod
+    def paintDisc_Internal(vol, x1d, y1d, z1d, z0, z1, radius, mu) -> None:
+        """Paint a flat disc (the base plate) centred on the z-axis."""
         vol_z, vol_y, vol_x = vol.shape
-        pin_r = H.PIN_DIA_MM / 2.0
-        sph_r = dia / 2.0
-        step = x1d[1] - x1d[0] if len(x1d) > 1 else 1.0
-        reach = max(pin_r, sph_r) + 2.0 * step
+        k0 = max(0, int(np.searchsorted(z1d, z0)))
+        k1 = min(vol_z, int(np.searchsorted(z1d, z1)) + 1)
+        if k1 <= k0:
+            return
+        r2 = x1d[None, :] ** 2 + y1d[:, None] ** 2
+        vol[k0:k1, r2 < radius ** 2] = mu
+
+    @staticmethod
+    def paintSphere_Internal(vol, x1d, y1d, z1d, centre, radius, mu) -> None:
+        """Paint a solid ball into `vol` in place."""
+        vol_z, vol_y, vol_x = vol.shape
+        cx, cy, cz = centre
+
+        i0 = max(0, int(np.searchsorted(x1d, cx - radius)))
+        i1 = min(vol_x, int(np.searchsorted(x1d, cx + radius)) + 1)
+        j0 = max(0, int(np.searchsorted(y1d, cy - radius)))
+        j1 = min(vol_y, int(np.searchsorted(y1d, cy + radius)) + 1)
+        k0 = max(0, int(np.searchsorted(z1d, cz - radius)))
+        k1 = min(vol_z, int(np.searchsorted(z1d, cz + radius)) + 1)
+        if i0 >= i1 or j0 >= j1 or k0 >= k1:
+            return
+
+        xl = (x1d[i0:i1] - cx)[None, None, :]
+        yl = (y1d[j0:j1] - cy)[None, :, None]
+        zl = (z1d[k0:k1] - cz)[:, None, None]
+        sub = vol[k0:k1, j0:j1, i0:i1]
+        sub[(xl ** 2 + yl ** 2 + zl ** 2) < radius ** 2] = mu
+
+    @staticmethod
+    def paintCone_Internal(vol, x1d, y1d, z1d, cx, cy, z0, z1, r0, r1, mu) -> None:
+        """
+        Paint a vertical conical pillar (frustum) at fixed (cx, cy), tapering
+        from radius r0 at z0 to radius r1 at z1. Every ball sits directly
+        above its own pillar (same x, y; only height and radius differ by
+        family), so unlike JigStructure's pins or the old hedgehog spokes,
+        this stays axis-aligned - just with a per-slice radius instead of a
+        constant one.
+        """
+        vol_z, vol_y, vol_x = vol.shape
+        if z1 <= z0:
+            return
+        reach = max(r0, r1)
 
         i0 = max(0, int(np.searchsorted(x1d, cx - reach)))
         i1 = min(vol_x, int(np.searchsorted(x1d, cx + reach)) + 1)
         j0 = max(0, int(np.searchsorted(y1d, cy - reach)))
         j1 = min(vol_y, int(np.searchsorted(y1d, cy + reach)) + 1)
-        if i0 >= i1 or j0 >= j1:
+        k0 = max(0, int(np.searchsorted(z1d, z0)))
+        k1 = min(vol_z, int(np.searchsorted(z1d, z1)) + 1)
+        if i0 >= i1 or j0 >= j1 or k0 >= k1:
             return
 
         xl = (x1d[i0:i1] - cx)[None, None, :]
         yl = (y1d[j0:j1] - cy)[None, :, None]
+        t = np.clip((z1d[k0:k1] - z0) / (z1 - z0), 0.0, 1.0)
+        r_at_z = (r0 + (r1 - r0) * t)[:, None, None]
 
-        # shaft: from the base top to just under the sphere centre. The
-        # radial mask has no z dependence, so it is applied to every layer
-        # of the slab explicitly rather than relying on boolean broadcasting
-        # (which numpy does not do for fancy indexing).
-        k0 = max(0, int(np.searchsorted(z1d, z_pin_bot)))
-        k1 = min(vol_z, int(np.searchsorted(z1d, cz)) + 1)
-        if k1 > k0:
-            pin_mask = ((xl ** 2 + yl ** 2) < pin_r ** 2)[0]
-            sub = vol[k0:k1, j0:j1, i0:i1]
-            sub[:, pin_mask] = H.MU_PIN
-
-        # ball: painted after the shaft so it cleanly overwrites the tip
-        k0 = max(0, int(np.searchsorted(z1d, cz - sph_r)))
-        k1 = min(vol_z, int(np.searchsorted(z1d, cz + sph_r)) + 1)
-        if k1 > k0:
-            zl = (z1d[k0:k1] - cz)[:, None, None]
-            sub = vol[k0:k1, j0:j1, i0:i1]
-            sub[(xl ** 2 + yl ** 2 + zl ** 2) < sph_r ** 2] = H.MU_SPHERE
+        sub = vol[k0:k1, j0:j1, i0:i1]
+        sub[(xl ** 2 + yl ** 2) < r_at_z ** 2] = mu

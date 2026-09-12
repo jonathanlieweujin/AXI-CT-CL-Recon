@@ -2,6 +2,7 @@ import itertools
 import json
 import os
 import re
+import time
 import warnings
 from enum import Enum
 
@@ -15,6 +16,7 @@ from Manager.Param import VxParam
 from Manager.Constants.laminography_method import LaminographyMethodConstants
 from SyntheticDataGenerator.Structures.bga import BgaStructure
 from SyntheticDataGenerator.Structures.hbm import HBMStructure
+from SyntheticDataGenerator.Structures.jig import JigStructure
 from SyntheticDataGenerator.Structures.materials import MU_CU
 from SyntheticDataGenerator.Structures.mesh import MeshStructure
 from SyntheticDataGenerator.Structures.micro_jig import MicroJigStructure
@@ -32,7 +34,8 @@ class VxPhantomConstants(str, Enum):
     BGA   = "BGA"    # die-on-substrate BGA joints with IPC-7095 void defects
     WLCSP = "WLCSP"  # wafer-level CSP: balls straight onto the die, no substrate
     PCB_PANEL = "PCB_PANEL"  # PCB panel matching the FID_2 reference (200um bumps, PTH vias)
-    MICRO_JIG = "MICRO_JIG"  # 22-sphere VDI/VDE 2630 accuracy check piece
+    JIG = "JIG"              # full-size 22-sphere VDI/VDE 2630 accuracy check piece
+    MICRO_JIG = "MICRO_JIG"  # small-FOV 22-ball check piece for micro-CT / laminography rigs
 
     def __str__(self) -> str:
         return self.value
@@ -210,7 +213,7 @@ class VxSyntheticDataGenerator:
         # the whole thing, which would double peak memory
         for i in range(self.NumProjections):
             frame = np.ascontiguousarray(self.Sinogram[:, i, :], dtype=np.float32)
-            cv2.imwrite(os.path.join(corrected, f"proj_{i:04d}.tif"), frame)
+            self.writeTiff_Internal(os.path.join(corrected, f"proj_{i:04d}.tif"), frame)
 
         with open(os.path.join(config_dir, "geometry.config"), "w", encoding="utf-8") as f:
             f.write(self.buildConfig_Internal())
@@ -400,6 +403,30 @@ class VxSyntheticDataGenerator:
                 f"fov={extent}  proj range={rng}")
 
     # private / internal
+    @staticmethod
+    def writeTiff_Internal(path: str, frame: np.ndarray,
+                            attempts: int = 5, retry_delay_s: float = 0.05) -> None:
+        """
+        cv2.imwrite returns False rather than raising on failure, so a bad
+        write silently disappears unless the return value is checked - easy
+        to miss in a loop over hundreds of files. Writing many small TIFFs
+        back-to-back on Windows can hit a transient sharing violation (a
+        newly created file briefly locked by antivirus real-time scanning or
+        OneDrive/cloud-sync folder protection), which is almost always gone
+        a few milliseconds later - hence the short retry before giving up.
+        """
+        for attempt in range(attempts):
+            if cv2.imwrite(path, frame):
+                return
+            time.sleep(retry_delay_s * (attempt + 1))
+        raise IOError(
+            f"Failed to write {path} after {attempts} attempts. If this "
+            f"keeps happening, the output folder is likely being scanned or "
+            f"synced (Windows Defender real-time protection, OneDrive/cloud "
+            f"backup) while projections are written - exclude it from that "
+            f"scanning, or write to a local, non-synced folder."
+        )
+
     def requireParams_Internal(self) -> VxParam:
         if self.Param is None:
             raise ValueError("No parameters: call SetParams first.")
@@ -472,6 +499,8 @@ class VxSyntheticDataGenerator:
                 return BgaStructure
         if k == VxPhantomConstants.HBM:
                 return HBMStructure
+        if k == VxPhantomConstants.JIG:
+                return JigStructure
         if k == VxPhantomConstants.MICRO_JIG:
                 return MicroJigStructure
         return None
@@ -536,6 +565,9 @@ class VxSyntheticDataGenerator:
             return vol
         if self.PhantomKind == VxPhantomConstants.HBM:
             return HBMStructure.GetStructure(shape, vs)
+        if self.PhantomKind == VxPhantomConstants.JIG:
+            vol, self.Manifest = JigStructure.Build(shape, vs)
+            return vol
         if self.PhantomKind == VxPhantomConstants.MICRO_JIG:
             vol, self.Manifest = MicroJigStructure.Build(shape, vs)
             return vol

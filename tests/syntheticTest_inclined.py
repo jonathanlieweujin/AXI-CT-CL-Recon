@@ -1,35 +1,52 @@
+import argparse
+import os
+import sys
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from SyntheticDataGenerator import VxSyntheticDataGenerator, VxPhantomConstants
 from Manager.Constants.laminography_method import LaminographyMethodConstants
 
 # --- Parameters ---
-Phantom = VxPhantomConstants.PCB_PANEL
-DST = rf"output\Synthetic\{Phantom}"
-DetU = 768
-DetV = 768
+_cli = argparse.ArgumentParser()
+_cli.add_argument("--tilt", type=float, default=51.0,
+                   help="DetTiltX in degrees (each tilt/offset combination gets its own output subfolder)")
+_cli.add_argument("--offset-u", type=float, default=0.0, help="DetOffsetU in pixels")
+_cli.add_argument("--offset-v", type=float, default=0.0, help="DetOffsetV in pixels")
+_args, _ = _cli.parse_known_args()
+
+Phantom = VxPhantomConstants.MICRO_JIG
+
+DetTiltX = _args.tilt
+_suffix = f"_tilt{DetTiltX:g}"
+if _args.offset_u or _args.offset_v:
+    _suffix += f"_offU{_args.offset_u:g}_offV{_args.offset_v:g}"
+DST = rf"output\Synthetic\{Phantom}{_suffix}"
+DetU = 600
+DetV = 700
 DetZ = 721
 
-DetPitch = 0.085 * 2
+DetPitch = 0.4
 Binning = 1
-LaminographyMethod = LaminographyMethodConstants.COPLANAR
 
+LaminographyMethod = LaminographyMethodConstants.INCLINED
 ProjectionAngles = np.linspace(0, 360, DetZ, endpoint=True)
 
-VolX = 768
-VolY = 768
-VolZ = 250
+VolX = 600
+VolY = 600
+VolZ = 350
 
-SOD = 17
-SDD = 476
+SOD = 10
+SDD = 490
 
-DetTiltX = 30
 DetTiltY = 0
 
-DetOffsetU = 0
-DetOffsetV = 0
+DetOffsetU = _args.offset_u
+DetOffsetV = _args.offset_v
 
 # Offset in mm
 VolMidX = 0
