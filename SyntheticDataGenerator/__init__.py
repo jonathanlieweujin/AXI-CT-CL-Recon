@@ -20,6 +20,7 @@ from SyntheticDataGenerator.Structures.jig import JigStructure
 from SyntheticDataGenerator.Structures.materials import MU_CU
 from SyntheticDataGenerator.Structures.mesh import MeshStructure
 from SyntheticDataGenerator.Structures.micro_jig import MicroJigStructure
+from SyntheticDataGenerator.Noise import VxNoiseModel
 from SyntheticDataGenerator.Structures.pcb_panel import PcbPanelStructure
 from SyntheticDataGenerator.Structures.slab import SlabStructure
 from SyntheticDataGenerator.Structures.solid import SolidStructure
@@ -78,6 +79,7 @@ class VxSyntheticDataGenerator:
         # kept in ASTRA order (det_v, n_angles, det_u): the stack is far too
         # large at full detector resolution to also hold a transposed copy.
         self.Sinogram = None
+        self.ToAddNoise = True
 
     # Public
     def SetParams(
@@ -99,10 +101,18 @@ class VxSyntheticDataGenerator:
         iterations: int = 1,
         phantom_size_mm: tuple[float, float, float] = None,
         max_phantom_voxels: int = None,
+        toAddNoise: bool = True,
     ) -> VxParam:
         """
         Build the geometry the dataset needs and return the reconstruction
         param.
+
+        toAddNoise (default True) adds VxNoiseModel's Poisson shot noise +
+        read noise + dark floor to the projections in Run(), so a dataset
+        reads like a real acquisition rather than a noiseless simulation -
+        including air not landing on an exact 0. Turn it off for ground
+        truth / geometry-recovery testing, where the noiseless case is what
+        you actually want to validate against.
 
         det_width/det_height/det_pitch describe the UNBINNED detector the
         projections are stored at. Two params are derived from them: the
@@ -145,6 +155,7 @@ class VxSyntheticDataGenerator:
         self.PhantomSizeOverrideMm = phantom_size_mm
         if max_phantom_voxels is not None:
             self.MaxPhantomVoxelsOverride = int(max_phantom_voxels)
+        self.ToAddNoise = toAddNoise
         self.Volume = None
         self.Sinogram = None
         return self.Param
@@ -616,6 +627,8 @@ class VxSyntheticDataGenerator:
                 f"phantom_size_mm / max_phantom_voxels. Original error: {exc}"
             ) from exc
         astra.data3d.delete(proj_id)
+        if self.ToAddNoise:
+            proj = VxNoiseModel().Apply(proj)
         return proj
 
     def buildConfig_Internal(self) -> str:
